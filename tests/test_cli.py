@@ -167,6 +167,102 @@ class TestCliFlows(unittest.TestCase):
                 self.assertEqual(task["status"], "snoozed")
                 self.assertEqual(task["snooze_until"], "2026-03-07T00:00:00+00:00")
 
+    def test_reminder_ack_flow_and_pending_ack(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "ack task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+
+            rc1, _ = run_with_output(
+                ["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
+            )
+            self.assertEqual(rc1, 0)
+            _, pending1 = run_with_output(["--db", db_path, "reminder", "pending-ack"])
+            self.assertIn("1\tsent", pending1)
+
+            rc2, _ = run_with_output(["--db", db_path, "reminder", "ack", "1"])
+            self.assertEqual(rc2, 0)
+            _, pending2 = run_with_output(["--db", db_path, "reminder", "pending-ack"])
+            self.assertNotIn("1\tsent", pending2)
+
+            _, show = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("status: acknowledged", show)
+            self.assertIn("acked_via: cli", show)
+
+    def test_reminder_snooze_and_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "snooze task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+
+            rc1, _ = run_with_output(["--db", db_path, "reminder", "snooze", "1", "2026-03-08T09:00:00+08:00"])
+            self.assertEqual(rc1, 0)
+            _, show1 = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("status: snoozed", show1)
+            self.assertIn("attempt_count: 0", show1)
+            self.assertIn("next_retry_at: None", show1)
+
+            run_with_output(["--db", db_path, "task", "create", "skip task"])
+            run_with_output(["--db", db_path, "reminder", "create", "2", "2026-03-07T00:00:00+00:00"])
+            rc2, _ = run_with_output(["--db", db_path, "reminder", "skip", "2", "--reason", "not needed"])
+            self.assertEqual(rc2, 0)
+            _, show2 = run_with_output(["--db", db_path, "reminder", "show", "2"])
+            self.assertIn("status: skipped", show2)
+            self.assertIn("skip_reason: not needed", show2)
+
+    def test_reminder_retry_scheduling_and_expired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "retry task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+            _, show1 = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("attempt_count: 1", show1)
+            self.assertIn("next_retry_at: 2026-03-07T00:10:00+00:00", show1)
+
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:10:00+00:00"])
+            _, show2 = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("attempt_count: 2", show2)
+            self.assertIn("next_retry_at: 2026-03-07T00:40:00+00:00", show2)
+
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:40:00+00:00"])
+            _, show3 = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("attempt_count: 3", show3)
+            self.assertIn("next_retry_at: 2026-03-07T02:40:00+00:00", show3)
+
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T02:40:00+00:00"])
+            _, show4 = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("status: expired", show4)
+
+    def test_reminder_history_and_cross_user_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "task", "create", "x task"])
+            run_with_output(
+                ["--db", db_path, "--user", "xiaoyu", "reminder", "create", "1", "2026-03-07T00:00:00+00:00"]
+            )
+            run_with_output(
+                ["--db", db_path, "--user", "xiaoyu", "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
+            )
+
+            rc1, out1 = run_with_output(["--db", db_path, "--user", "partner", "reminder", "ack", "1"])
+            rc2, out2 = run_with_output(
+                ["--db", db_path, "--user", "partner", "reminder", "snooze", "1", "2026-03-08T09:00:00+08:00"]
+            )
+            rc3, out3 = run_with_output(["--db", db_path, "--user", "partner", "reminder", "skip", "1"])
+            self.assertEqual(rc1, 1)
+            self.assertEqual(rc2, 1)
+            self.assertEqual(rc3, 1)
+            self.assertIn("reminder not found", out1)
+            self.assertIn("reminder not found", out2)
+            self.assertIn("reminder not found", out3)
+
+            _, history = run_with_output(["--db", db_path, "--user", "xiaoyu", "reminder", "history", "1"])
+            self.assertIn("created", history)
+            self.assertIn("sent", history)
+
     def test_migration_backfills_existing_rows_to_xiaoyu(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "life.db"
@@ -180,6 +276,9 @@ class TestCliFlows(unittest.TestCase):
             )
             conn.execute(
                 "CREATE TABLE abandonment_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER, reason_code TEXT, reason_text TEXT, energy_level INTEGER, created_at TEXT NOT NULL)"
+            )
+            conn.execute(
+                "CREATE TABLE reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL, remind_at TEXT NOT NULL, channel TEXT NOT NULL DEFAULT 'cli', status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, sent_at TEXT)"
             )
             conn.execute(
                 "CREATE TABLE anki_drafts (id INTEGER PRIMARY KEY AUTOINCREMENT, source_type TEXT NOT NULL, source_id INTEGER, deck_name TEXT NOT NULL DEFAULT 'inbox', front TEXT NOT NULL, back TEXT NOT NULL, tags TEXT, status TEXT NOT NULL DEFAULT 'draft', created_at TEXT NOT NULL, exported_at TEXT)"

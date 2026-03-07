@@ -48,6 +48,13 @@ python -m life_system.main task abandon 2 --reason-code overwhelm --reason-text 
 # Reminder
 python -m life_system.main reminder create 1 2026-03-08T10:00:00+08:00
 python -m life_system.main reminder due
+python -m life_system.main reminder due --send
+python -m life_system.main reminder pending-ack
+python -m life_system.main reminder ack 1
+python -m life_system.main reminder snooze 1 2026-03-08T12:00:00+08:00
+python -m life_system.main reminder skip 1 --reason "not needed"
+python -m life_system.main reminder show 1
+python -m life_system.main reminder history 1
 
 # Anki Draft
 python -m life_system.main anki create manual "What is next action?" "A concrete next step"
@@ -59,9 +66,20 @@ python -m life_system.main --user partner anki export-csv data/partner_anki.csv
 ## Datetime Validation
 
 - `task snooze` and `reminder create` require strict ISO-8601 datetime.
+- `reminder snooze` also requires strict ISO-8601 datetime.
 - Valid examples:
   - `2026-03-08T09:00:00+08:00`
   - `2026-03-07T00:00:00+00:00`
+
+## Reminder Statuses
+
+- pending
+- sent
+- acknowledged
+- snoozed
+- skipped
+- failed
+- expired
 
 ## Abandonment Reason Presets
 
@@ -70,3 +88,5 @@ python -m life_system.main --user partner anki export-csv data/partner_anki.csv
 - no_value
 - impulse
 - blocked
+
+##retries are scheduled step-by-step when the processor runs

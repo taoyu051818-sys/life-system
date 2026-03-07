@@ -73,8 +73,23 @@ def build_parser() -> argparse.ArgumentParser:
     reminder_create.add_argument("remind_at", help="ISO timestamp")
     reminder_create.add_argument("--channel", default="cli")
     reminder_due = reminder_sub.add_parser("due")
+    reminder_due.add_argument("--send", action="store_true")
     reminder_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     reminder_due.add_argument("--limit", type=int, default=50)
+    reminder_pending_ack = reminder_sub.add_parser("pending-ack")
+    reminder_pending_ack.add_argument("--limit", type=int, default=50)
+    reminder_ack = reminder_sub.add_parser("ack")
+    reminder_ack.add_argument("reminder_id", type=int)
+    reminder_snooze = reminder_sub.add_parser("snooze")
+    reminder_snooze.add_argument("reminder_id", type=int)
+    reminder_snooze.add_argument("remind_at", help="ISO timestamp")
+    reminder_skip = reminder_sub.add_parser("skip")
+    reminder_skip.add_argument("reminder_id", type=int)
+    reminder_skip.add_argument("--reason", default=None)
+    reminder_show = reminder_sub.add_parser("show")
+    reminder_show.add_argument("reminder_id", type=int)
+    reminder_history = reminder_sub.add_parser("history")
+    reminder_history.add_argument("reminder_id", type=int)
 
     anki = subparsers.add_parser("anki")
     anki_sub = anki.add_subparsers(dest="action", required=True)
@@ -247,9 +262,75 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         return 0
 
     if entity == "reminder" and action == "due":
-        items = service.due_reminders(now=args.now, limit=args.limit)
+        items = service.due_reminders(now=args.now, limit=args.limit, send=args.send)
         for item in items:
-            print(f"{item['id']}\ttask={item['task_id']}\t{item['remind_at']}\t{item['task_title']}")
+            print(
+                f"{item['id']}\t{item['status']}\tattempt={item['attempt_count']}\t"
+                f"retry={item['next_retry_at']}\ttask={item['task_id']}\t{item['remind_at']}\t{item['task_title']}"
+            )
+        if args.send:
+            print(f"reminders processed: {len(items)}")
+        return 0
+
+    if entity == "reminder" and action == "pending-ack":
+        items = service.list_pending_ack_reminders(limit=args.limit)
+        for item in items:
+            print(
+                f"{item['id']}\t{item['status']}\tattempt={item['attempt_count']}\t"
+                f"retry={item['next_retry_at']}\ttask={item['task_id']}\t{item['task_title']}"
+            )
+        return 0
+
+    if entity == "reminder" and action == "ack":
+        ok = service.ack_reminder(args.reminder_id)
+        print("reminder acknowledged" if ok else "reminder not found")
+        return 0 if ok else 1
+
+    if entity == "reminder" and action == "snooze":
+        if not _validate_iso8601(args.remind_at, "remind_at"):
+            return 1
+        ok = service.snooze_reminder(args.reminder_id, args.remind_at)
+        print("reminder snoozed" if ok else "reminder not found")
+        return 0 if ok else 1
+
+    if entity == "reminder" and action == "skip":
+        ok = service.skip_reminder(args.reminder_id, reason=args.reason)
+        print("reminder skipped" if ok else "reminder not found")
+        return 0 if ok else 1
+
+    if entity == "reminder" and action == "show":
+        item = service.show_reminder(args.reminder_id)
+        if item is None:
+            print("reminder not found")
+            return 1
+        for key in [
+            "id",
+            "task_id",
+            "task_title",
+            "status",
+            "remind_at",
+            "requires_ack",
+            "ack_at",
+            "last_attempt_at",
+            "attempt_count",
+            "next_retry_at",
+            "max_attempts",
+            "escalation_level",
+            "acked_via",
+            "skip_reason",
+            "message_ref",
+            "created_at",
+        ]:
+            print(f"{key}: {item.get(key)}")
+        return 0
+
+    if entity == "reminder" and action == "history":
+        events = service.reminder_history(args.reminder_id)
+        if events is None:
+            print("reminder not found")
+            return 1
+        for ev in events:
+            print(f"{ev['id']}\t{ev['event_at']}\t{ev['event_type']}\t{ev['payload']}")
         return 0
 
     if entity == "anki" and action == "create":

@@ -241,28 +241,201 @@ class ReminderRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def create(self, task_id: int, remind_at: str, channel: str, created_at: str) -> int:
+    def create(self, task_id: int, remind_at: str, channel: str, created_at: str, requires_ack: bool = True) -> int:
         cur = self.conn.execute(
             """
-            INSERT INTO reminders(task_id, remind_at, channel, status, created_at)
-            VALUES(?, ?, ?, 'pending', ?)
+            INSERT INTO reminders(task_id, remind_at, channel, status, created_at, requires_ack)
+            VALUES(?, ?, ?, 'pending', ?, ?)
             """,
-            (task_id, remind_at, channel, created_at),
+            (task_id, remind_at, channel, created_at, 1 if requires_ack else 0),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def due(self, user_id: int, now: str, limit: int) -> list[dict[str, Any]]:
+    def list_due_candidates(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
-            SELECT r.id, r.task_id, r.remind_at, r.channel, r.status, t.title AS task_title
+            SELECT
+              r.id, r.task_id, r.remind_at, r.channel, r.status, r.created_at,
+              r.requires_ack, r.ack_at, r.last_attempt_at, r.attempt_count,
+              r.next_retry_at, r.max_attempts, r.escalation_level, r.acked_via,
+              r.skip_reason, r.message_ref,
+              t.title AS task_title
             FROM reminders r
             JOIN tasks t ON t.id = r.task_id
-            WHERE r.status = 'pending' AND r.remind_at <= ? AND t.user_id = ?
+            WHERE t.user_id = ? AND r.status IN ('pending', 'sent', 'snoozed')
             ORDER BY r.remind_at ASC, r.id ASC
             LIMIT ?
             """,
-            (now, user_id, limit),
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_pending_ack(self, user_id: int, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              r.id, r.task_id, r.remind_at, r.channel, r.status, r.created_at,
+              r.requires_ack, r.ack_at, r.last_attempt_at, r.attempt_count,
+              r.next_retry_at, r.max_attempts, r.escalation_level, r.acked_via,
+              r.skip_reason, r.message_ref,
+              t.title AS task_title
+            FROM reminders r
+            JOIN tasks t ON t.id = r.task_id
+            WHERE
+              t.user_id = ?
+              AND r.status = 'sent'
+              AND r.requires_ack = 1
+              AND r.ack_at IS NULL
+            ORDER BY r.next_retry_at ASC, r.id ASC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_for_user(self, user_id: int, reminder_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              r.id, r.task_id, r.remind_at, r.channel, r.status, r.created_at,
+              r.requires_ack, r.ack_at, r.last_attempt_at, r.attempt_count,
+              r.next_retry_at, r.max_attempts, r.escalation_level, r.acked_via,
+              r.skip_reason, r.message_ref,
+              t.title AS task_title
+            FROM reminders r
+            JOIN tasks t ON t.id = r.task_id
+            WHERE r.id = ? AND t.user_id = ?
+            """,
+            (reminder_id, user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def update_delivery(
+        self,
+        reminder_id: int,
+        status: str,
+        last_attempt_at: str | None,
+        attempt_count: int,
+        next_retry_at: str | None,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE reminders
+            SET status = ?, last_attempt_at = ?, attempt_count = ?, next_retry_at = ?
+            WHERE id = ?
+            """,
+            (status, last_attempt_at, attempt_count, next_retry_at, reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_acknowledged(self, reminder_id: int, ack_at: str, acked_via: str) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE reminders
+            SET
+              status = 'acknowledged',
+              ack_at = ?,
+              acked_via = ?,
+              next_retry_at = NULL
+            WHERE id = ?
+            """,
+            (ack_at, acked_via, reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_snoozed(self, reminder_id: int, remind_at: str) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE reminders
+            SET
+              status = 'snoozed',
+              remind_at = ?,
+              last_attempt_at = NULL,
+              attempt_count = 0,
+              next_retry_at = NULL
+            WHERE id = ?
+            """,
+            (remind_at, reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_skipped(self, reminder_id: int, skip_reason: str | None) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE reminders
+            SET
+              status = 'skipped',
+              skip_reason = ?,
+              next_retry_at = NULL
+            WHERE id = ?
+            """,
+            (skip_reason, reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_expired(self, reminder_id: int) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE reminders
+            SET status = 'expired', next_retry_at = NULL
+            WHERE id = ?
+            """,
+            (reminder_id,),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_failed(self, reminder_id: int, reason: str | None = None) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE reminders
+            SET status = 'failed', next_retry_at = NULL, skip_reason = ?
+            WHERE id = ?
+            """,
+            (reason, reminder_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+
+class ReminderEventRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        reminder_id: int,
+        user_id: int,
+        event_type: str,
+        event_at: str,
+        payload: str | None,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO reminder_events(reminder_id, user_id, event_type, event_at, payload)
+            VALUES(?, ?, ?, ?, ?)
+            """,
+            (reminder_id, user_id, event_type, event_at, payload),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def list_for_user(self, user_id: int, reminder_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, reminder_id, user_id, event_type, event_at, payload
+            FROM reminder_events
+            WHERE user_id = ? AND reminder_id = ?
+            ORDER BY event_at ASC, id ASC
+            """,
+            (user_id, reminder_id),
         ).fetchall()
         return [dict(row) for row in rows]
 

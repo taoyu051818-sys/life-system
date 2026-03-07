@@ -1,5 +1,7 @@
+import json
 import sqlite3
 from csv import DictWriter
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -9,9 +11,12 @@ from life_system.infra.repositories import (
     AbandonmentLogRepository,
     AnkiDraftRepository,
     InboxRepository,
+    ReminderEventRepository,
     ReminderRepository,
     TaskRepository,
 )
+
+RETRY_MINUTES = [10, 30, 120]
 
 
 class LifeSystemService:
@@ -27,6 +32,7 @@ class LifeSystemService:
         self.inbox_repo = InboxRepository(conn)
         self.task_repo = TaskRepository(conn)
         self.reminder_repo = ReminderRepository(conn)
+        self.reminder_event_repo = ReminderEventRepository(conn)
         self.abandon_repo = AbandonmentLogRepository(conn)
         self.anki_repo = AnkiDraftRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
@@ -162,14 +168,79 @@ class LifeSystemService:
             channel=channel,
             created_at=now_utc_iso(),
         )
+        self._log_reminder_event(reminder_id, "created", {"task_id": task_id, "channel": channel})
         self.event_logger.log("reminder_created", {"reminder_id": reminder_id, "task_id": task_id})
         return reminder_id
 
-    def due_reminders(self, now: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        pivot = now or now_utc_iso()
-        items = self.reminder_repo.due(user_id=self.user_id, now=pivot, limit=limit)
-        self.event_logger.log("reminder_due_checked", {"now": pivot, "count": len(items)})
-        return items
+    def due_reminders(self, now: str | None = None, limit: int = 50, send: bool = False) -> list[dict[str, Any]]:
+        pivot_iso = now or now_utc_iso()
+        pivot_dt = self._parse_iso(pivot_iso)
+        candidates = self.reminder_repo.list_due_candidates(user_id=self.user_id, limit=limit * 5)
+        due: list[dict[str, Any]] = []
+        for item in candidates:
+            is_due, parse_error = self._is_due_with_error(item, pivot_dt)
+            if parse_error:
+                if send:
+                    self.reminder_repo.mark_failed(item["id"], reason=parse_error)
+                    self._log_reminder_event(item["id"], "failed", {"reason": parse_error})
+                continue
+            if is_due:
+                due.append(item)
+        due = due[:limit]
+        if not send:
+            self.event_logger.log("reminder_due_checked", {"now": pivot_iso, "count": len(due)})
+            return due
+
+        result: list[dict[str, Any]] = []
+        for item in due:
+            processed = self._send_or_expire(item, pivot_dt)
+            if processed is not None:
+                result.append(processed)
+        self.event_logger.log("reminder_due_sent", {"now": pivot_iso, "count": len(result)})
+        return result
+
+    def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
+
+    def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> bool:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return False
+        now = now_utc_iso()
+        updated = self.reminder_repo.mark_acknowledged(reminder_id=reminder_id, ack_at=now, acked_via=acked_via)
+        if not updated:
+            return False
+        self._log_reminder_event(reminder_id, "acknowledged", {"acked_via": acked_via})
+        return True
+
+    def snooze_reminder(self, reminder_id: int, remind_at: str) -> bool:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return False
+        updated = self.reminder_repo.mark_snoozed(reminder_id=reminder_id, remind_at=remind_at)
+        if not updated:
+            return False
+        self._log_reminder_event(reminder_id, "snoozed", {"remind_at": remind_at})
+        return True
+
+    def skip_reminder(self, reminder_id: int, reason: str | None = None) -> bool:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return False
+        updated = self.reminder_repo.mark_skipped(reminder_id=reminder_id, skip_reason=reason)
+        if not updated:
+            return False
+        self._log_reminder_event(reminder_id, "skipped", {"reason": reason})
+        return True
+
+    def show_reminder(self, reminder_id: int) -> dict[str, Any] | None:
+        return self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+
+    def reminder_history(self, reminder_id: int) -> list[dict[str, Any]] | None:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return None
+        return self.reminder_event_repo.list_for_user(user_id=self.user_id, reminder_id=reminder_id)
 
     def create_anki_draft(
         self,
@@ -218,3 +289,72 @@ class LifeSystemService:
             writer.writerows(rows)
         self.event_logger.log("anki_drafts_exported_csv", {"path": str(path), "count": len(rows)})
         return len(rows)
+
+    def _send_or_expire(self, item: dict[str, Any], now_dt: datetime) -> dict[str, Any] | None:
+        reminder_id = item["id"]
+        status = item["status"]
+        attempt_count = int(item.get("attempt_count") or 0)
+        max_attempts = int(item.get("max_attempts") or 3)
+        requires_ack = bool(item.get("requires_ack"))
+
+        if status == "sent" and requires_ack and attempt_count >= max_attempts:
+            self.reminder_repo.mark_expired(reminder_id)
+            self._log_reminder_event(reminder_id, "expired", {"attempt_count": attempt_count})
+            return self.reminder_repo.get_for_user(self.user_id, reminder_id)
+
+        new_attempt = attempt_count + 1
+        next_retry_at = None
+        if requires_ack:
+            retry_minutes = RETRY_MINUTES[min(new_attempt - 1, len(RETRY_MINUTES) - 1)]
+            next_retry_at = self._to_iso(now_dt + timedelta(minutes=retry_minutes))
+
+        self.reminder_repo.update_delivery(
+            reminder_id=reminder_id,
+            status="sent",
+            last_attempt_at=self._to_iso(now_dt),
+            attempt_count=new_attempt,
+            next_retry_at=next_retry_at,
+        )
+
+        event_type = "retried" if status == "sent" else "sent"
+        self._log_reminder_event(
+            reminder_id,
+            event_type,
+            {"attempt_count": new_attempt, "next_retry_at": next_retry_at},
+        )
+        return self.reminder_repo.get_for_user(self.user_id, reminder_id)
+
+    def _is_due_with_error(self, item: dict[str, Any], now_dt: datetime) -> tuple[bool, str | None]:
+        status = item["status"]
+        try:
+            if status in ("pending", "snoozed"):
+                return self._parse_iso(item["remind_at"]) <= now_dt, None
+
+            if status == "sent":
+                if not bool(item.get("requires_ack")):
+                    return False, None
+                if item.get("ack_at"):
+                    return False, None
+                next_retry = item.get("next_retry_at")
+                if not next_retry:
+                    return False, None
+                return self._parse_iso(next_retry) <= now_dt, None
+        except ValueError:
+            return False, "invalid_datetime_in_reminder"
+
+        return False, None
+
+    def _log_reminder_event(self, reminder_id: int, event_type: str, payload: dict[str, Any]) -> None:
+        self.reminder_event_repo.create(
+            reminder_id=reminder_id,
+            user_id=self.user_id,
+            event_type=event_type,
+            event_at=now_utc_iso(),
+            payload=json.dumps(payload, ensure_ascii=True),
+        )
+
+    def _parse_iso(self, value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def _to_iso(self, value: datetime) -> str:
+        return value.replace(microsecond=0).isoformat()
