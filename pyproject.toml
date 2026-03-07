@@ -1,0 +1,7 @@
+[project]
+name = "life-system"
+version = "0.1.0"
+description = "Low-resource CLI-first personal life system"
+requires-python = ">=3.10"
+dependencies = []
+
