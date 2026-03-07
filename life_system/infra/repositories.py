@@ -11,7 +11,7 @@ class UserRepository:
     def get_by_username(self, username: str) -> dict[str, Any] | None:
         row = self.conn.execute(
             """
-            SELECT id, username, display_name, created_at
+            SELECT id, username, display_name, created_at, telegram_chat_id
             FROM users
             WHERE username = ?
             """,
@@ -24,7 +24,7 @@ class UserRepository:
     def list_all(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
-            SELECT id, username, display_name, created_at
+            SELECT id, username, display_name, created_at, telegram_chat_id
             FROM users
             ORDER BY username ASC
             """
@@ -44,6 +44,22 @@ class UserRepository:
             return int(cur.lastrowid)
         except sqlite3.IntegrityError:
             return None
+
+    def set_telegram_chat_id(self, username: str, chat_id: str) -> int:
+        cur = self.conn.execute(
+            "UPDATE users SET telegram_chat_id = ? WHERE username = ?",
+            (chat_id, username),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def clear_telegram_chat_id(self, username: str) -> int:
+        cur = self.conn.execute(
+            "UPDATE users SET telegram_chat_id = NULL WHERE username = ?",
+            (username,),
+        )
+        self.conn.commit()
+        return cur.rowcount
 
 
 class InboxRepository:
@@ -429,14 +445,15 @@ class ReminderRepository:
         last_attempt_at: str | None,
         attempt_count: int,
         next_retry_at: str | None,
+        message_ref: str | None = None,
     ) -> int:
         cur = self.conn.execute(
             """
             UPDATE reminders
-            SET status = ?, last_attempt_at = ?, attempt_count = ?, next_retry_at = ?
+            SET status = ?, last_attempt_at = ?, attempt_count = ?, next_retry_at = ?, message_ref = ?
             WHERE id = ?
             """,
-            (status, last_attempt_at, attempt_count, next_retry_at, reminder_id),
+            (status, last_attempt_at, attempt_count, next_retry_at, message_ref, reminder_id),
         )
         self.conn.commit()
         return cur.rowcount

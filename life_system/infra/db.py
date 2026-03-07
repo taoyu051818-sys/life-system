@@ -73,6 +73,7 @@ def _ensure_default_users_and_backfill(conn: sqlite3.Connection) -> None:
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT NOT NULL UNIQUE,
           display_name TEXT,
+          telegram_chat_id TEXT,
           created_at TEXT NOT NULL
         );
         """

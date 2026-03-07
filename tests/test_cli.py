@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from life_system.cli.commands import run_cli
 from life_system.infra.db import connection_ctx
@@ -71,6 +72,22 @@ class TestCliFlows(unittest.TestCase):
             rc4, out4 = run_with_output(["--db", db_path, "user", "list"])
             self.assertEqual(rc4, 0)
             self.assertIn("alice", out4)
+
+    def test_user_set_and_clear_telegram(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            rc1, out1 = run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "123456"])
+            self.assertEqual(rc1, 0)
+            self.assertIn("telegram chat id set for xiaoyu", out1)
+            rc2, out2 = run_with_output(["--db", db_path, "user", "list"])
+            self.assertEqual(rc2, 0)
+            self.assertIn("Telegram:已配置", out2)
+            rc3, out3 = run_with_output(["--db", db_path, "user", "clear-telegram", "xiaoyu"])
+            self.assertEqual(rc3, 0)
+            self.assertIn("telegram chat id cleared for xiaoyu", out3)
+            rc4, out4 = run_with_output(["--db", db_path, "user", "list"])
+            self.assertEqual(rc4, 0)
+            self.assertIn("Telegram:未配置", out4)
 
     def test_user_isolation_for_inbox_task_anki_lists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -532,6 +549,65 @@ class TestCliFlows(unittest.TestCase):
                 "今天证据还不多，先补一条简短记录会更稳。",
             ]
             self.assertTrue(any(note in out for note in allowed))
+
+    def test_reminder_due_send_missing_token_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "123456"])
+            run_with_output(["--db", db_path, "task", "create", "tg task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+
+            with patch.dict("os.environ", {}, clear=True):
+                rc, out = run_with_output(
+                    ["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
+                )
+            self.assertEqual(rc, 1)
+            self.assertIn("TELEGRAM_BOT_TOKEN 未设置", out)
+
+    def test_reminder_due_send_fallback_without_chat_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "fallback task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            rc, out = run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+            self.assertEqual(rc, 0)
+            self.assertIn("reminders processed: 1, failed: 0", out)
+
+    def test_reminder_due_send_success_with_mocked_sender(self) -> None:
+        class FakeSender:
+            def send_message(self, chat_id: str, text: str) -> str:
+                assert chat_id == "999999"
+                assert "提醒：" in text
+                return "m123"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "999999"])
+            run_with_output(["--db", db_path, "task", "create", "tg send task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=FakeSender()):
+                rc, out = run_with_output(
+                    ["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
+                )
+            self.assertEqual(rc, 0)
+            self.assertIn("reminders processed: 1, failed: 0", out)
+            _, show = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            self.assertIn("message_ref: m123", show)
+
+    def test_no_token_leakage_in_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "123456"])
+            run_with_output(["--db", db_path, "task", "create", "secure task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "SECRET_TOKEN_ABC"}):
+                with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=None):
+                    rc, out = run_with_output(
+                        ["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
+                    )
+            self.assertEqual(rc, 1)
+            self.assertNotIn("SECRET_TOKEN_ABC", out)
 
 
 if __name__ == "__main__":

@@ -72,6 +72,10 @@ python -m life_system.main journal today
 # Summary
 python -m life_system.main summary today
 python -m life_system.main summary day --date 2026-03-07
+
+# User Telegram
+python -m life_system.main user set-telegram xiaoyu 123456789
+python -m life_system.main user clear-telegram xiaoyu
 ```
 
 ## Datetime Validation
@@ -115,6 +119,21 @@ python -m life_system.main summary day --date 2026-03-07
 - Includes overview counts, journal highlights, state snapshot, open loops, and a short conservative note.
 - Reminder overview splits first send and retry separately.
 - Journal highlights are capped to a small recent subset for readability.
+
+## Telegram Reminder Setup
+
+1. Use BotFather to create a bot and get a bot token.
+2. Export token in shell:
+   - `set TELEGRAM_BOT_TOKEN=...` (Windows)
+   - `export TELEGRAM_BOT_TOKEN=...` (Linux/macOS)
+3. Set chat id for a user:
+   - `python -m life_system.main user set-telegram xiaoyu <chat_id>`
+4. Send due reminders:
+   - `python -m life_system.main --user xiaoyu reminder due --send`
+
+Notes:
+- If user has no `telegram_chat_id`, `--send` falls back to CLI processing.
+- If `telegram_chat_id` exists but token is missing, send fails clearly.
 
 ## Abandonment Reason Presets
 

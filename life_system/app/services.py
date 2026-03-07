@@ -27,10 +27,14 @@ class LifeSystemService:
         conn: sqlite3.Connection,
         user_id: int,
         username: str,
+        telegram_chat_id: str | None = None,
+        reminder_sender: Any | None = None,
         event_logger: EventLogger | None = None,
     ):
         self.user_id = user_id
         self.username = username
+        self.telegram_chat_id = telegram_chat_id
+        self.reminder_sender = reminder_sender
         self.inbox_repo = InboxRepository(conn)
         self.task_repo = TaskRepository(conn)
         self.reminder_repo = ReminderRepository(conn)
@@ -200,13 +204,37 @@ class LifeSystemService:
             self.event_logger.log("reminder_due_checked", {"now": pivot_iso, "count": len(due)})
             return due
 
+        result = self.send_due_reminders(now=now, limit=limit)
+        return result["items"]
+
+    def send_due_reminders(self, now: str | None = None, limit: int = 50) -> dict[str, Any]:
+        pivot_iso = now or now_utc_iso()
+        pivot_dt = self._parse_iso(pivot_iso)
+        candidates = self.reminder_repo.list_due_candidates(user_id=self.user_id, limit=limit * 5)
+        due: list[dict[str, Any]] = []
+        for item in candidates:
+            is_due, parse_error = self._is_due_with_error(item, pivot_dt)
+            if parse_error:
+                self.reminder_repo.mark_failed(item["id"], reason=parse_error)
+                self._log_reminder_event(item["id"], "failed", {"reason": parse_error})
+                continue
+            if is_due:
+                due.append(item)
+        due = due[:limit]
+
+        if self.telegram_chat_id and self.reminder_sender is None:
+            return {"error": "missing_telegram_token", "items": [], "processed": 0, "failed": len(due)}
+
         result: list[dict[str, Any]] = []
+        failed = 0
         for item in due:
-            processed = self._send_or_expire(item, pivot_dt)
-            if processed is not None:
+            processed = self._deliver_and_update(item, pivot_dt)
+            if processed is None:
+                failed += 1
+            else:
                 result.append(processed)
-        self.event_logger.log("reminder_due_sent", {"now": pivot_iso, "count": len(result)})
-        return result
+        self.event_logger.log("reminder_due_sent", {"now": pivot_iso, "count": len(result), "failed": failed})
+        return {"error": None, "items": result, "processed": len(result), "failed": failed}
 
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
@@ -407,7 +435,7 @@ class LifeSystemService:
         day = datetime.now(CST).date().isoformat()
         return self.build_day_summary(day)
 
-    def _send_or_expire(self, item: dict[str, Any], now_dt: datetime) -> dict[str, Any] | None:
+    def _deliver_and_update(self, item: dict[str, Any], now_dt: datetime) -> dict[str, Any] | None:
         reminder_id = item["id"]
         status = item["status"]
         attempt_count = int(item.get("attempt_count") or 0)
@@ -418,6 +446,12 @@ class LifeSystemService:
             self.reminder_repo.mark_expired(reminder_id)
             self._log_reminder_event(reminder_id, "expired", {"attempt_count": attempt_count})
             return self.reminder_repo.get_for_user(self.user_id, reminder_id)
+
+        try:
+            message_ref = self._deliver_reminder_message(item)
+        except Exception:
+            self._log_reminder_event(reminder_id, "failed", {"reason": "delivery_failed"})
+            return None
 
         new_attempt = attempt_count + 1
         next_retry_at = None
@@ -431,6 +465,7 @@ class LifeSystemService:
             last_attempt_at=self._to_iso(now_dt),
             attempt_count=new_attempt,
             next_retry_at=next_retry_at,
+            message_ref=message_ref,
         )
 
         event_type = "retried" if status == "sent" else "sent"
@@ -440,6 +475,18 @@ class LifeSystemService:
             {"attempt_count": new_attempt, "next_retry_at": next_retry_at},
         )
         return self.reminder_repo.get_for_user(self.user_id, reminder_id)
+
+    def _deliver_reminder_message(self, item: dict[str, Any]) -> str:
+        message = (
+            f"提醒：{item['task_title']}\n"
+            f"用户：{self.username}\n"
+            f"提醒时间：{item['remind_at']}\n"
+            f"提醒编号：{item['id']}\n"
+            "回复仍暂时通过 CLI 处理"
+        )
+        if self.telegram_chat_id and self.reminder_sender is not None:
+            return self.reminder_sender.send_message(self.telegram_chat_id, message)
+        return "cli_fallback"
 
     def _is_due_with_error(self, item: dict[str, Any], now_dt: datetime) -> tuple[bool, str | None]:
         status = item["status"]

@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
@@ -7,6 +8,7 @@ from typing import Sequence
 from life_system.app.services import LifeSystemService
 from life_system.infra.db import connection_ctx, ensure_database, now_utc_iso, resolve_db_path
 from life_system.infra.repositories import UserRepository
+from life_system.infra.telegram_sender import TelegramReminderSender
 
 
 VALID_TASK_STATUSES = {"open", "snoozed", "done", "abandoned"}
@@ -31,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     user_add = user_sub.add_parser("add")
     user_add.add_argument("username")
     user_add.add_argument("--display-name", default=None)
+    user_set_tg = user_sub.add_parser("set-telegram")
+    user_set_tg.add_argument("username")
+    user_set_tg.add_argument("chat_id")
+    user_clear_tg = user_sub.add_parser("clear-telegram")
+    user_clear_tg.add_argument("username")
 
     capture = subparsers.add_parser("capture")
     capture.add_argument("content")
@@ -158,7 +165,13 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         if user is None:
             print(f"user not found: {args.user}")
             return 1
-        service = LifeSystemService(conn, user_id=user["id"], username=user["username"])
+        service = LifeSystemService(
+            conn,
+            user_id=user["id"],
+            username=user["username"],
+            telegram_chat_id=user.get("telegram_chat_id"),
+            reminder_sender=_build_telegram_sender_from_env(),
+        )
         return _dispatch(service, args)
 
 
@@ -166,7 +179,8 @@ def _dispatch_user(user_repo: UserRepository, args: argparse.Namespace) -> int:
     if args.action == "list":
         rows = user_repo.list_all()
         for row in rows:
-            print(f"{row['id']}\t{row['username']}\t{row['display_name']}")
+            tg = "已配置" if row.get("telegram_chat_id") else "未配置"
+            print(f"{row['id']}\t{row['username']}\t{row['display_name']}\tTelegram:{tg}")
         return 0
 
     if args.action == "add":
@@ -177,7 +191,30 @@ def _dispatch_user(user_repo: UserRepository, args: argparse.Namespace) -> int:
         print(f"user added: id={user_id} username={args.username}")
         return 0
 
+    if args.action == "set-telegram":
+        updated = user_repo.set_telegram_chat_id(args.username, args.chat_id)
+        if not updated:
+            print(f"user not found: {args.username}")
+            return 1
+        print(f"telegram chat id set for {args.username}")
+        return 0
+
+    if args.action == "clear-telegram":
+        updated = user_repo.clear_telegram_chat_id(args.username)
+        if not updated:
+            print(f"user not found: {args.username}")
+            return 1
+        print(f"telegram chat id cleared for {args.username}")
+        return 0
+
     return 1
+
+
+def _build_telegram_sender_from_env() -> TelegramReminderSender | None:
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        return None
+    return TelegramReminderSender(token)
 
 
 def _validate_iso8601(value: str, field_name: str) -> bool:
@@ -429,7 +466,14 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         return 0
 
     if entity == "reminder" and action == "due":
-        items = service.due_reminders(now=args.now, limit=args.limit, send=args.send)
+        if args.send:
+            result = service.send_due_reminders(now=args.now, limit=args.limit)
+            if result["error"] == "missing_telegram_token":
+                print("TELEGRAM_BOT_TOKEN 未设置，无法发送 Telegram 提醒")
+                return 1
+            items = result["items"]
+        else:
+            items = service.due_reminders(now=args.now, limit=args.limit, send=False)
         for item in items:
             print(
                 f"[{item['id']}] {item['status']} | attempt={item['attempt_count']} "
@@ -437,7 +481,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
                 f"| task={item['task_id']} {item['task_title']}"
             )
         if args.send:
-            print(f"reminders processed: {len(items)}")
+            print(f"reminders processed: {result['processed']}, failed: {result['failed']}")
         return 0
 
     if entity == "reminder" and action == "pending-ack":
