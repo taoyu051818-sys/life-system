@@ -493,6 +493,46 @@ class TestCliFlows(unittest.TestCase):
             self.assertIn("首次发送=1", out)
             self.assertIn("重试=1", out)
 
+    def test_summary_journal_time_display_in_beijing_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "init-db"])
+            with connection_ctx(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO journal_entries(
+                      user_id, entry_type, content, created_at
+                    ) VALUES (1, 'activity', 'tz check', '2026-03-07T13:24:00+00:00')
+                    """
+                )
+                conn.commit()
+
+            _, out = run_with_output(["--db", str(db_path), "summary", "day", "--date", "2026-03-07"])
+            self.assertIn("2026-03-07 21:24", out)
+
+    def test_summary_journal_highlights_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            for i in range(5):
+                run_with_output(["--db", db_path, "journal", "add", f"log-{i}", "--type", "activity"])
+            _, out = run_with_output(["--db", db_path, "summary", "today"])
+            lines = [line for line in out.splitlines() if line.startswith("- 活动") or line.startswith("- 反思") or line.startswith("- 小胜利") or line.startswith("- 状态记录")]
+            self.assertLessEqual(len(lines), 3)
+
+    def test_summary_note_is_stable_chinese_template(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "journal", "add", "only log", "--type", "activity"])
+            _, out = run_with_output(["--db", db_path, "summary", "today"])
+            allowed = [
+                "今天有持续记录，也有实际推进，可以继续保持这种小步前进。",
+                "今天有真实完成项，节奏是稳定的。",
+                "今天留下了清晰的活动和状态证据，说明你没有脱离系统。",
+                "今天虽然正式完成项不多，但有真实记录和闭环动作。",
+                "今天证据还不多，先补一条简短记录会更稳。",
+            ]
+            self.assertTrue(any(note in out for note in allowed))
+
 
 if __name__ == "__main__":
     unittest.main()

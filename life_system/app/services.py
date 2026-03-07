@@ -488,11 +488,11 @@ class LifeSystemService:
         journal_count = overview["journal_count"]
         pending_ack = open_loops["pending_ack"]
         if done > 0 and journal_count > 0:
-            return "今天已有可见进展，任务完成与记录都在累积。"
+            return "今天有持续记录，也有实际推进，可以继续保持这种小步前进。"
         if done > 0:
-            return "今天有任务完成记录，建议继续保持当前节奏。"
+            return "今天有真实完成项，节奏是稳定的。"
         if journal_count > 0:
-            return "今天已有日志证据，建议继续保持小步记录。"
+            return "今天留下了清晰的活动和状态证据，说明你没有脱离系统。"
         if pending_ack > 0:
-            return "当前还有待确认提醒，可先清理提醒闭环。"
-        return "今天的证据记录较少，可先补一条简短活动或复盘。"
+            return "今天虽然正式完成项不多，但有真实记录和闭环动作。"
+        return "今天证据还不多，先补一条简短记录会更稳。"

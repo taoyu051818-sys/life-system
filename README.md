@@ -110,9 +110,11 @@ python -m life_system.main summary day --date 2026-03-07
 
 - `summary today` / `summary day` output is Chinese by default.
 - Summary day boundaries are hardcoded to Asia/Shanghai (北京时间).
+- Summary timestamps in highlights are displayed in Beijing time.
 - Summary is evidence-first and user-scoped.
 - Includes overview counts, journal highlights, state snapshot, open loops, and a short conservative note.
 - Reminder overview splits first send and retry separately.
+- Journal highlights are capped to a small recent subset for readability.
 
 ## Abandonment Reason Presets
 

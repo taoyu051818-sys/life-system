@@ -1,7 +1,7 @@
 import argparse
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from life_system.app.services import LifeSystemService
@@ -14,6 +14,7 @@ ABANDON_REASON_PRESETS = {"overwhelm", "wrong_timing", "no_value", "impulse", "b
 VALID_JOURNAL_TYPES = {"activity", "reflection", "win", "checkin"}
 ISO_8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z)$")
 DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CST = timezone(timedelta(hours=8), name="CST")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -275,18 +276,25 @@ def _print_summary(summary: dict[str, object]) -> None:
     has_journal = False
     type_labels = {
         "activity": "活动",
-        "reflection": "复盘",
-        "win": "收获",
-        "checkin": "签到",
+        "reflection": "反思",
+        "win": "小胜利",
+        "checkin": "状态记录",
     }
+    rows_all: list[dict[str, object]] = []
     for et in ("activity", "reflection", "win", "checkin"):
-        rows = grouped.get(et, [])
-        if not rows:
-            continue
+        for row in grouped.get(et, []):
+            copied = dict(row)
+            copied["_et"] = et
+            rows_all.append(copied)
+    rows_all.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+    rows_all = rows_all[:3]
+    if rows_all:
         has_journal = True
-        print(f"- {type_labels.get(et, et)}:")
-        for row in rows:
-            print(f"  [{row['id']}] {row['created_at']} | {row['content']}")
+        for row in rows_all:
+            et = str(row.get("_et"))
+            label = type_labels.get(et, et)
+            ts = _to_cst_display(str(row["created_at"]))
+            print(f"- {label} [{row['id']}] {ts} | {row['content']}")
     if not has_journal:
         print("- 今天暂无日志记录")
     print("")
@@ -309,6 +317,11 @@ def _print_summary(summary: dict[str, object]) -> None:
 
     print("【今日短注】")
     print(note)
+
+
+def _to_cst_display(iso_text: str) -> str:
+    dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
+    return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M")
 
 
 def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
