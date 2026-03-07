@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
 from life_system.app.services import LifeSystemService
+from life_system.app.telegram_polling import TelegramPollingService
 from life_system.infra.db import connection_ctx, ensure_database, now_utc_iso, resolve_db_path
 from life_system.infra.repositories import UserRepository
 from life_system.infra.telegram_sender import TelegramReminderSender
@@ -141,6 +142,11 @@ def build_parser() -> argparse.ArgumentParser:
     summary_day = summary_sub.add_parser("day", help="Show summary for a specific day")
     summary_day.add_argument("--date", required=True, help="YYYY-MM-DD")
 
+    telegram = subparsers.add_parser("telegram", help="Telegram polling utilities")
+    telegram_sub = telegram.add_subparsers(dest="action", required=True)
+    telegram_poll = telegram_sub.add_parser("poll", help="Poll Telegram callback updates")
+    telegram_poll.add_argument("--limit", type=int, default=20)
+
     return parser
 
 
@@ -160,6 +166,21 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         user_repo = UserRepository(conn)
         if args.entity == "user":
             return _dispatch_user(user_repo, args)
+        if args.entity == "telegram":
+            sender = _build_telegram_sender_from_env()
+            if sender is None:
+                print("TELEGRAM_BOT_TOKEN 未设置，无法执行 telegram poll")
+                return 1
+            poller = TelegramPollingService(conn, sender)
+            try:
+                result = poller.poll(limit=args.limit)
+            except RuntimeError as exc:
+                print(f"telegram poll failed: {exc}")
+                return 1
+            print(
+                f"telegram poll done: fetched={result['fetched']}, processed={result['processed']}, ignored={result['ignored']}"
+            )
+            return 0
 
         user = user_repo.get_by_username(args.user)
         if user is None:
@@ -361,6 +382,69 @@ def _to_cst_display(iso_text: str) -> str:
     return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M")
 
 
+def _to_cst_display_with_seconds(iso_text: str) -> str:
+    dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
+    return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fmt_reminder_time(value: object) -> str:
+    if value is None:
+        return "-"
+    text = str(value)
+    try:
+        return _to_cst_display_with_seconds(text)
+    except Exception:
+        return text
+
+
+def _print_reminder_show(item: dict[str, object]) -> None:
+    keys = [
+        "id",
+        "task_id",
+        "task_title",
+        "status",
+        "remind_at",
+        "requires_ack",
+        "ack_at",
+        "last_attempt_at",
+        "attempt_count",
+        "next_retry_at",
+        "max_attempts",
+        "escalation_level",
+        "acked_via",
+        "skip_reason",
+        "message_ref",
+        "created_at",
+    ]
+    time_keys = {"remind_at", "ack_at", "last_attempt_at", "next_retry_at", "created_at"}
+    for key in keys:
+        value = item.get(key)
+        if key in time_keys:
+            print(f"{key}: {_fmt_reminder_time(value)}")
+        else:
+            print(f"{key}: {value}")
+
+
+def _format_history_payload_cst(payload: str | None) -> str:
+    if not payload:
+        return "-"
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return payload
+    if not isinstance(data, dict):
+        return str(data)
+
+    time_keys = {"remind_at", "next_retry_at", "ack_at", "last_attempt_at"}
+    out: list[str] = []
+    for k in sorted(data):
+        v = data[k]
+        if k in time_keys:
+            v = _fmt_reminder_time(v)
+        out.append(f"{k}={v}")
+    return ", ".join(out) if out else "-"
+
+
 def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     entity = args.entity
     action = getattr(args, "action", None)
@@ -477,7 +561,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         for item in items:
             print(
                 f"[{item['id']}] {item['status']} | attempt={item['attempt_count']} "
-                f"| retry={_fmt_optional(item['next_retry_at'])} | remind_at={item['remind_at']} "
+                f"| retry={_fmt_reminder_time(item['next_retry_at'])} | remind_at={_fmt_reminder_time(item['remind_at'])} "
                 f"| task={item['task_id']} {item['task_title']}"
             )
         if args.send:
@@ -489,7 +573,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         for item in items:
             print(
                 f"[{item['id']}] {item['status']} | attempt={item['attempt_count']} "
-                f"| retry={_fmt_optional(item['next_retry_at'])} | task={item['task_id']} {item['task_title']}"
+                f"| retry={_fmt_reminder_time(item['next_retry_at'])} | task={item['task_id']} {item['task_title']}"
             )
         return 0
 
@@ -533,24 +617,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         if item is None:
             print("reminder not found")
             return 1
-        _print_kv_block(item, [
-            "id",
-            "task_id",
-            "task_title",
-            "status",
-            "remind_at",
-            "requires_ack",
-            "ack_at",
-            "last_attempt_at",
-            "attempt_count",
-            "next_retry_at",
-            "max_attempts",
-            "escalation_level",
-            "acked_via",
-            "skip_reason",
-            "message_ref",
-            "created_at",
-        ])
+        _print_reminder_show(item)
         return 0
 
     if entity == "reminder" and action == "history":
@@ -559,8 +626,8 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             print("reminder not found")
             return 1
         for ev in events:
-            payload_text = _format_history_payload(ev["payload"])
-            print(f"[{ev['id']}] {ev['event_at']} | {ev['event_type']} | {payload_text}")
+            payload_text = _format_history_payload_cst(ev["payload"])
+            print(f"[{ev['id']}] {_fmt_reminder_time(ev['event_at'])} | {ev['event_type']} | {payload_text}")
         return 0
 
     if entity == "anki" and action == "create":

@@ -120,6 +120,11 @@ python -m life_system.main user clear-telegram xiaoyu
 - Reminder overview splits first send and retry separately.
 - Journal highlights are capped to a small recent subset for readability.
 
+## Reminder Time Display
+
+- Reminder CLI display (`due`, `pending-ack`, `show`, `history`) uses Beijing time for readability.
+- Reminder storage remains UTC ISO-8601 internally.
+
 ## Telegram Reminder Setup
 
 1. Use BotFather to create a bot and get a bot token.
@@ -130,10 +135,17 @@ python -m life_system.main user clear-telegram xiaoyu
    - `python -m life_system.main user set-telegram xiaoyu <chat_id>`
 4. Send due reminders:
    - `python -m life_system.main --user xiaoyu reminder due --send`
+5. Poll callback updates (this pass uses polling, not webhook):
+   - `python -m life_system.main telegram poll --limit 20`
 
 Notes:
 - If user has no `telegram_chat_id`, `--send` falls back to CLI processing.
 - If `telegram_chat_id` exists but token is missing, send fails clearly.
+- Telegram reminder buttons:
+  - 完成
+  - 延后10分钟
+  - 跳过今天
+- Callback actions are processed via `telegram poll` and then mapped to existing reminder ack/snooze/skip logic.
 
 ## Abandonment Reason Presets
 

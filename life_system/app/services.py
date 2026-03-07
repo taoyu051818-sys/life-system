@@ -485,6 +485,8 @@ class LifeSystemService:
             "回复仍暂时通过 CLI 处理"
         )
         if self.telegram_chat_id and self.reminder_sender is not None:
+            if hasattr(self.reminder_sender, "send_reminder"):
+                return self.reminder_sender.send_reminder(self.telegram_chat_id, message, int(item["id"]))
             return self.reminder_sender.send_message(self.telegram_chat_id, message)
         return "cli_fallback"
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from life_system.cli.commands import run_cli
+from life_system.app.telegram_polling import parse_callback_data
 from life_system.infra.db import connection_ctx
 
 
@@ -19,6 +20,13 @@ def run_with_output(args: list[str]) -> tuple[int, str]:
 
 
 class TestCliFlows(unittest.TestCase):
+    def test_telegram_callback_parsing(self) -> None:
+        self.assertEqual(parse_callback_data("ra:12"), ("ra", 12))
+        self.assertEqual(parse_callback_data("rz:99"), ("rz", 99))
+        self.assertEqual(parse_callback_data("rk:5"), ("rk", 5))
+        self.assertIsNone(parse_callback_data("bad"))
+        self.assertIsNone(parse_callback_data("ra:x"))
+
     def test_init_db_creates_default_users(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
@@ -219,7 +227,7 @@ class TestCliFlows(unittest.TestCase):
             _, show1 = run_with_output(["--db", db_path, "reminder", "show", "1"])
             self.assertIn("status: snoozed", show1)
             self.assertIn("attempt_count: 0", show1)
-            self.assertIn("next_retry_at: None", show1)
+            self.assertIn("next_retry_at: -", show1)
 
             run_with_output(["--db", db_path, "task", "create", "skip task"])
             run_with_output(["--db", db_path, "reminder", "create", "2", "2026-03-07T00:00:00+00:00"])
@@ -238,17 +246,17 @@ class TestCliFlows(unittest.TestCase):
             run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
             _, show1 = run_with_output(["--db", db_path, "reminder", "show", "1"])
             self.assertIn("attempt_count: 1", show1)
-            self.assertIn("next_retry_at: 2026-03-07T00:10:00+00:00", show1)
+            self.assertIn("next_retry_at: 2026-03-07 08:10:00", show1)
 
             run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:10:00+00:00"])
             _, show2 = run_with_output(["--db", db_path, "reminder", "show", "1"])
             self.assertIn("attempt_count: 2", show2)
-            self.assertIn("next_retry_at: 2026-03-07T00:40:00+00:00", show2)
+            self.assertIn("next_retry_at: 2026-03-07 08:40:00", show2)
 
             run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:40:00+00:00"])
             _, show3 = run_with_output(["--db", db_path, "reminder", "show", "1"])
             self.assertIn("attempt_count: 3", show3)
-            self.assertIn("next_retry_at: 2026-03-07T02:40:00+00:00", show3)
+            self.assertIn("next_retry_at: 2026-03-07 10:40:00", show3)
 
             run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T02:40:00+00:00"])
             _, show4 = run_with_output(["--db", db_path, "reminder", "show", "1"])
@@ -281,6 +289,41 @@ class TestCliFlows(unittest.TestCase):
             self.assertIn("created", history)
             self.assertIn("sent", history)
             self.assertIn("task_id=1", history)
+
+    def test_reminder_outputs_display_beijing_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "tz reminder"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            _, out_due = run_with_output(["--db", db_path, "reminder", "due", "--now", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+
+            _, out_pending = run_with_output(["--db", db_path, "reminder", "pending-ack"])
+            _, out_show = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            _, out_history = run_with_output(["--db", db_path, "reminder", "history", "1"])
+
+            self.assertIn("remind_at=2026-03-07 08:00:00", out_due)
+            self.assertIn("retry=2026-03-07 08:10:00", out_pending)
+            self.assertIn("remind_at: 2026-03-07 08:00:00", out_show)
+            self.assertIn("next_retry_at: 2026-03-07 08:10:00", out_show)
+            self.assertIn("2026-03-07", out_history)
+            self.assertNotIn("T00:00:00+00:00", out_show)
+            self.assertNotIn("+00:00", out_pending)
+            self.assertNotIn("+00:00", out_history)
+
+    def test_reminder_storage_remains_utc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "task", "create", "utc storage"])
+            run_with_output(["--db", str(db_path), "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", str(db_path), "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+            with connection_ctx(db_path) as conn:
+                row = conn.execute(
+                    "SELECT remind_at, next_retry_at, last_attempt_at FROM reminders WHERE id = 1"
+                ).fetchone()
+                self.assertEqual(row["remind_at"], "2026-03-07T00:00:00+00:00")
+                self.assertEqual(row["next_retry_at"], "2026-03-07T00:10:00+00:00")
+                self.assertEqual(row["last_attempt_at"], "2026-03-07T00:00:00+00:00")
 
     def test_journal_add_list_today(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -607,6 +650,179 @@ class TestCliFlows(unittest.TestCase):
                         ["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
                     )
             self.assertEqual(rc, 1)
+            self.assertNotIn("SECRET_TOKEN_ABC", out)
+
+    def test_telegram_poll_missing_token_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            with patch.dict("os.environ", {}, clear=True):
+                rc, out = run_with_output(["--db", db_path, "telegram", "poll"])
+            self.assertEqual(rc, 1)
+            self.assertIn("TELEGRAM_BOT_TOKEN 未设置", out)
+
+    def test_telegram_poll_ack_snooze_skip_and_already_processed(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.answers: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "task", "create", "tg action task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "callback_query": {"id": "c1", "data": "ra:1", "message": {"chat": {"id": 1001}}}},
+                    {"update_id": 2, "callback_query": {"id": "c2", "data": "rz:2", "message": {"chat": {"id": 1001}}}},
+                    {"update_id": 3, "callback_query": {"id": "c3", "data": "rk:3", "message": {"chat": {"id": 1001}}}},
+                    {"update_id": 4, "callback_query": {"id": "c4", "data": "ra:1", "message": {"chat": {"id": 1001}}}},
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, _ = run_with_output(["--db", db_path, "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            _, s1 = run_with_output(["--db", db_path, "reminder", "show", "1"])
+            _, s2 = run_with_output(["--db", db_path, "reminder", "show", "2"])
+            _, s3 = run_with_output(["--db", db_path, "reminder", "show", "3"])
+            self.assertIn("status: acknowledged", s1)
+            self.assertIn("acked_via: telegram", s1)
+            self.assertIn("status: snoozed", s2)
+            self.assertIn("status: skipped", s3)
+            self.assertIn(("c1", "已确认"), fake.answers)
+            self.assertIn(("c4", "已经处理过了"), fake.answers)
+
+    def test_telegram_poll_user_isolation(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.answers: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "user", "set-telegram", "partner", "2002"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "task", "create", "x task"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+
+            fake = FakeSender(
+                [{"update_id": 10, "callback_query": {"id": "c10", "data": "ra:1", "message": {"chat": {"id": 2002}}}}]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, _ = run_with_output(["--db", db_path, "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            _, show = run_with_output(["--db", db_path, "--user", "xiaoyu", "reminder", "show", "1"])
+            self.assertNotIn("status: acknowledged", show)
+            self.assertIn(("c10", "提醒不存在或无权限"), fake.answers)
+
+    def test_telegram_poll_offset_persistence(self) -> None:
+        class FakeSender:
+            def __init__(self):
+                self.calls: list[int | None] = []
+                self.updates_seq = [
+                    [{"update_id": 100, "callback_query": {"id": "c100", "data": "ra:1", "message": {"chat": {"id": 1001}}}}],
+                    [],
+                ]
+                self.answers: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del limit
+                self.calls.append(offset)
+                return self.updates_seq.pop(0) if self.updates_seq else []
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "task", "create", "offset task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            fake = FakeSender()
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", db_path, "telegram", "poll"])
+                run_with_output(["--db", db_path, "telegram", "poll"])
+            self.assertEqual(fake.calls[0], None)
+            self.assertEqual(fake.calls[1], 101)
+
+    def test_answer_callback_failure_does_not_block_following_callbacks_and_offset(self) -> None:
+        class FakeSender:
+            def __init__(self):
+                self.answers: list[tuple[str, str]] = []
+                self.calls: list[int | None] = []
+                self.updates = [
+                    {"update_id": 201, "callback_query": {"id": "c201", "data": "ra:1", "message": {"chat": {"id": 1001}}}},
+                    {"update_id": 202, "callback_query": {"id": "c202", "data": "ra:2", "message": {"chat": {"id": 1001}}}},
+                ]
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del limit
+                self.calls.append(offset)
+                out = self.updates
+                self.updates = []
+                return out
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                if callback_query_id == "c201":
+                    raise RuntimeError("telegram_http_error 400: Bad Request: query is too old")
+                self.answers.append((callback_query_id, text))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", str(db_path), "task", "create", "a1"])
+            run_with_output(["--db", str(db_path), "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", str(db_path), "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            fake = FakeSender()
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("processed=2", out)
+            _, r1 = run_with_output(["--db", str(db_path), "reminder", "show", "1"])
+            _, r2 = run_with_output(["--db", str(db_path), "reminder", "show", "2"])
+            self.assertIn("status: acknowledged", r1)
+            self.assertIn("status: acknowledged", r2)
+            self.assertIn(("c202", "已确认"), fake.answers)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute("SELECT value FROM app_state WHERE key='telegram.update_offset'").fetchone()
+                self.assertEqual(row["value"], "203")
+
+    def test_telegram_http_error_description_visible_without_token(self) -> None:
+        class BrokenSender:
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                raise RuntimeError("telegram_http_error 400: Bad Request: query is too old")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "SECRET_TOKEN_ABC"}):
+                with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=BrokenSender()):
+                    rc, out = run_with_output(["--db", db_path, "telegram", "poll"])
+            self.assertEqual(rc, 1)
+            self.assertIn("telegram poll failed: telegram_http_error 400", out)
             self.assertNotIn("SECRET_TOKEN_ABC", out)
 
 

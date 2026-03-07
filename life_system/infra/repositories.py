@@ -61,6 +61,19 @@ class UserRepository:
         self.conn.commit()
         return cur.rowcount
 
+    def get_by_telegram_chat_id(self, chat_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, username, display_name, created_at, telegram_chat_id
+            FROM users
+            WHERE telegram_chat_id = ?
+            """,
+            (chat_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
 
 class InboxRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -894,3 +907,25 @@ def created_at_now() -> str:
     from life_system.infra.db import now_utc_iso
 
     return now_utc_iso()
+
+
+class AppStateRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def get(self, key: str) -> str | None:
+        row = self.conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+        if row is None:
+            return None
+        return str(row["value"])
+
+    def set(self, key: str, value: str, updated_at: str) -> None:
+        self.conn.execute(
+            """
+            INSERT INTO app_state(key, value, updated_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (key, value, updated_at),
+        )
+        self.conn.commit()
