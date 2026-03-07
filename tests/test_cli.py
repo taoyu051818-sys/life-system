@@ -263,6 +263,60 @@ class TestCliFlows(unittest.TestCase):
             self.assertIn("created", history)
             self.assertIn("sent", history)
 
+    def test_journal_add_list_today(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            rc1, _ = run_with_output(
+                [
+                    "--db",
+                    db_path,
+                    "journal",
+                    "add",
+                    "finished review",
+                    "--type",
+                    "activity",
+                    "--energy",
+                    "4",
+                    "--focus",
+                    "3",
+                    "--mood",
+                    "5",
+                    "--tags",
+                    "study,english",
+                ]
+            )
+            self.assertEqual(rc1, 0)
+            _, out_list = run_with_output(["--db", db_path, "journal", "list"])
+            self.assertIn("finished review", out_list)
+            self.assertIn("activity", out_list)
+            _, out_today = run_with_output(["--db", db_path, "journal", "today"])
+            self.assertIn("finished review", out_today)
+
+    def test_journal_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            rc, out = run_with_output(
+                ["--db", db_path, "journal", "add", "bad level", "--type", "win", "--energy", "8"]
+            )
+            self.assertEqual(rc, 1)
+            self.assertIn("invalid energy: must be 1-5", out)
+
+            with self.assertRaises(SystemExit):
+                run_cli(["--db", db_path, "journal", "add", "bad type", "--type", "other"])
+
+    def test_journal_multi_user_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "journal", "add", "x entry", "--type", "checkin"])
+            run_with_output(["--db", db_path, "--user", "partner", "journal", "add", "p entry", "--type", "reflection"])
+
+            _, out_x = run_with_output(["--db", db_path, "--user", "xiaoyu", "journal", "list"])
+            _, out_p = run_with_output(["--db", db_path, "--user", "partner", "journal", "list"])
+            self.assertIn("x entry", out_x)
+            self.assertNotIn("p entry", out_x)
+            self.assertIn("p entry", out_p)
+            self.assertNotIn("x entry", out_p)
+
     def test_migration_backfills_existing_rows_to_xiaoyu(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "life.db"

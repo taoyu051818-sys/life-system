@@ -10,6 +10,7 @@ from life_system.infra.repositories import UserRepository
 
 VALID_TASK_STATUSES = {"open", "snoozed", "done", "abandoned"}
 ABANDON_REASON_PRESETS = {"overwhelm", "wrong_timing", "no_value", "impulse", "blocked"}
+VALID_JOURNAL_TYPES = {"activity", "reflection", "win", "checkin"}
 ISO_8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z)$")
 
 
@@ -106,6 +107,24 @@ def build_parser() -> argparse.ArgumentParser:
     anki_export = anki_sub.add_parser("export-csv")
     anki_export.add_argument("path")
 
+    journal = subparsers.add_parser("journal")
+    journal_sub = journal.add_subparsers(dest="action", required=True)
+    journal_add = journal_sub.add_parser("add")
+    journal_add.add_argument("content")
+    journal_add.add_argument("--type", dest="entry_type", required=True, choices=sorted(VALID_JOURNAL_TYPES))
+    journal_add.add_argument("--task-id", type=int, default=None)
+    journal_add.add_argument("--inbox-id", type=int, default=None)
+    journal_add.add_argument("--energy", type=int, default=None)
+    journal_add.add_argument("--focus", type=int, default=None)
+    journal_add.add_argument("--mood", type=int, default=None)
+    journal_add.add_argument("--tags", default=None)
+    journal_list = journal_sub.add_parser("list")
+    journal_list.add_argument("--limit", type=int, default=50)
+    journal_list.add_argument("--type", dest="entry_type", default=None, choices=sorted(VALID_JOURNAL_TYPES))
+    journal_today = journal_sub.add_parser("today")
+    journal_today.add_argument("--limit", type=int, default=50)
+    journal_today.add_argument("--type", dest="entry_type", default=None, choices=sorted(VALID_JOURNAL_TYPES))
+
     return parser
 
 
@@ -162,6 +181,15 @@ def _validate_iso8601(value: str, field_name: str) -> bool:
         print(f"invalid {field_name}: must be ISO-8601 like 2026-03-08T09:00:00+08:00")
         return False
     return True
+
+
+def _validate_level(value: int | None, field_name: str) -> bool:
+    if value is None:
+        return True
+    if 1 <= value <= 5:
+        return True
+    print(f"invalid {field_name}: must be 1-5")
+    return False
 
 
 def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
@@ -356,6 +384,44 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     if entity == "anki" and action == "export-csv":
         count = service.export_anki_drafts_csv(args.path)
         print(f"anki drafts exported: count={count} path={args.path}")
+        return 0
+
+    if entity == "journal" and action == "add":
+        if not _validate_level(args.energy, "energy"):
+            return 1
+        if not _validate_level(args.focus, "focus"):
+            return 1
+        if not _validate_level(args.mood, "mood"):
+            return 1
+        entry_id = service.add_journal_entry(
+            content=args.content,
+            entry_type=args.entry_type,
+            related_task_id=args.task_id,
+            related_inbox_id=args.inbox_id,
+            energy_level=args.energy,
+            focus_level=args.focus,
+            mood_level=args.mood,
+            tags=args.tags,
+        )
+        print(f"journal entry added: id={entry_id}")
+        return 0
+
+    if entity == "journal" and action == "list":
+        rows = service.list_journal(limit=args.limit, entry_type=args.entry_type)
+        for row in rows:
+            print(
+                f"{row['id']}\t{row['entry_type']}\tE{row['energy_level']}/F{row['focus_level']}/M{row['mood_level']}"
+                f"\t{row['created_at']}\t{row['content']}"
+            )
+        return 0
+
+    if entity == "journal" and action == "today":
+        rows = service.today_journal(limit=args.limit, entry_type=args.entry_type)
+        for row in rows:
+            print(
+                f"{row['id']}\t{row['entry_type']}\tE{row['energy_level']}/F{row['focus_level']}/M{row['mood_level']}"
+                f"\t{row['created_at']}\t{row['content']}"
+            )
         return 0
 
     parser = build_parser()

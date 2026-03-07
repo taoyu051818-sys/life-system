@@ -527,3 +527,103 @@ class AnkiDraftRepository:
             (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+class JournalRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        user_id: int,
+        entry_type: str,
+        content: str,
+        related_task_id: int | None,
+        related_inbox_id: int | None,
+        energy_level: int | None,
+        focus_level: int | None,
+        mood_level: int | None,
+        tags: str | None,
+        created_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO journal_entries(
+              user_id, entry_type, content, related_task_id, related_inbox_id,
+              energy_level, focus_level, mood_level, tags, created_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                entry_type,
+                content,
+                related_task_id,
+                related_inbox_id,
+                energy_level,
+                focus_level,
+                mood_level,
+                tags,
+                created_at,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def list(self, user_id: int, limit: int, entry_type: str | None = None) -> list[dict[str, Any]]:
+        if entry_type:
+            rows = self.conn.execute(
+                """
+                SELECT
+                  id, entry_type, content, related_task_id, related_inbox_id,
+                  energy_level, focus_level, mood_level, tags, created_at
+                FROM journal_entries
+                WHERE user_id = ? AND entry_type = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (user_id, entry_type, limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT
+                  id, entry_type, content, related_task_id, related_inbox_id,
+                  energy_level, focus_level, mood_level, tags, created_at
+                FROM journal_entries
+                WHERE user_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def today(self, user_id: int, day_prefix: str, limit: int, entry_type: str | None = None) -> list[dict[str, Any]]:
+        if entry_type:
+            rows = self.conn.execute(
+                """
+                SELECT
+                  id, entry_type, content, related_task_id, related_inbox_id,
+                  energy_level, focus_level, mood_level, tags, created_at
+                FROM journal_entries
+                WHERE user_id = ? AND entry_type = ? AND created_at LIKE ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (user_id, entry_type, f"{day_prefix}%", limit),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT
+                  id, entry_type, content, related_task_id, related_inbox_id,
+                  energy_level, focus_level, mood_level, tags, created_at
+                FROM journal_entries
+                WHERE user_id = ? AND created_at LIKE ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (user_id, f"{day_prefix}%", limit),
+            ).fetchall()
+        return [dict(row) for row in rows]

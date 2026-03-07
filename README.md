@@ -61,6 +61,13 @@ python -m life_system.main anki create manual "What is next action?" "A concrete
 python -m life_system.main anki list
 python -m life_system.main anki export-csv data/anki_drafts.csv
 python -m life_system.main --user partner anki export-csv data/partner_anki.csv
+
+# Journal
+python -m life_system.main journal add "finished review" --type activity --energy 4 --focus 3 --mood 5 --tags study,english
+python -m life_system.main journal add "small win today" --type win
+python -m life_system.main journal list --limit 20
+python -m life_system.main journal list --type reflection
+python -m life_system.main journal today
 ```
 
 ## Datetime Validation
@@ -80,6 +87,13 @@ python -m life_system.main --user partner anki export-csv data/partner_anki.csv
 - skipped
 - failed
 - expired
+
+## Journal Entry Types
+
+- activity
+- reflection
+- win
+- checkin
 
 ## Abandonment Reason Presets
 

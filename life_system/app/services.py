@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from csv import DictWriter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +11,7 @@ from life_system.infra.repositories import (
     AbandonmentLogRepository,
     AnkiDraftRepository,
     InboxRepository,
+    JournalRepository,
     ReminderEventRepository,
     ReminderRepository,
     TaskRepository,
@@ -35,6 +36,7 @@ class LifeSystemService:
         self.reminder_event_repo = ReminderEventRepository(conn)
         self.abandon_repo = AbandonmentLogRepository(conn)
         self.anki_repo = AnkiDraftRepository(conn)
+        self.journal_repo = JournalRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
 
     def capture_inbox(self, content: str, source: str = "cli") -> int:
@@ -289,6 +291,44 @@ class LifeSystemService:
             writer.writerows(rows)
         self.event_logger.log("anki_drafts_exported_csv", {"path": str(path), "count": len(rows)})
         return len(rows)
+
+    def add_journal_entry(
+        self,
+        content: str,
+        entry_type: str,
+        related_task_id: int | None = None,
+        related_inbox_id: int | None = None,
+        energy_level: int | None = None,
+        focus_level: int | None = None,
+        mood_level: int | None = None,
+        tags: str | None = None,
+    ) -> int:
+        entry_id = self.journal_repo.create(
+            user_id=self.user_id,
+            entry_type=entry_type,
+            content=content,
+            related_task_id=related_task_id,
+            related_inbox_id=related_inbox_id,
+            energy_level=energy_level,
+            focus_level=focus_level,
+            mood_level=mood_level,
+            tags=tags,
+            created_at=now_utc_iso(),
+        )
+        self.event_logger.log("journal_added", {"entry_id": entry_id, "entry_type": entry_type})
+        return entry_id
+
+    def list_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
+        return self.journal_repo.list(user_id=self.user_id, limit=limit, entry_type=entry_type)
+
+    def today_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
+        day_prefix = datetime.now(timezone.utc).date().isoformat()
+        return self.journal_repo.today(
+            user_id=self.user_id,
+            day_prefix=day_prefix,
+            limit=limit,
+            entry_type=entry_type,
+        )
 
     def _send_or_expire(self, item: dict[str, Any], now_dt: datetime) -> dict[str, Any] | None:
         reminder_id = item["id"]
