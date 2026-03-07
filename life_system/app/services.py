@@ -41,8 +41,18 @@ class LifeSystemService:
         self.event_logger.log("inbox_captured", {"inbox_item_id": item_id, "username": self.username})
         return item_id
 
-    def list_inbox(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        return self.inbox_repo.list(user_id=self.user_id, status=status, limit=limit)
+    def list_inbox(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.inbox_repo.list(
+            user_id=self.user_id,
+            status=status,
+            limit=limit,
+            include_archived=include_archived,
+        )
 
     def triage_inbox_to_task(self, inbox_item_id: int) -> int | None:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)

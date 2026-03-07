@@ -21,6 +21,30 @@ class UserRepository:
             return None
         return dict(row)
 
+    def list_all(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, username, display_name, created_at
+            FROM users
+            ORDER BY username ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add(self, username: str, display_name: str | None, created_at: str) -> int | None:
+        try:
+            cur = self.conn.execute(
+                """
+                INSERT INTO users(username, display_name, created_at)
+                VALUES(?, ?, ?)
+                """,
+                (username, display_name, created_at),
+            )
+            self.conn.commit()
+            return int(cur.lastrowid)
+        except sqlite3.IntegrityError:
+            return None
+
 
 class InboxRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -37,7 +61,7 @@ class InboxRepository:
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list(self, user_id: int, status: str | None, limit: int) -> list[dict[str, Any]]:
+    def list(self, user_id: int, status: str | None, limit: int, include_archived: bool = False) -> list[dict[str, Any]]:
         if status:
             rows = self.conn.execute(
                 """
@@ -50,16 +74,28 @@ class InboxRepository:
                 (user_id, status, limit),
             ).fetchall()
         else:
-            rows = self.conn.execute(
-                """
-                SELECT id, content, source, status, created_at
-                FROM inbox_items
-                WHERE user_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (user_id, limit),
-            ).fetchall()
+            if include_archived:
+                rows = self.conn.execute(
+                    """
+                    SELECT id, content, source, status, created_at
+                    FROM inbox_items
+                    WHERE user_id = ?
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (user_id, limit),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    """
+                    SELECT id, content, source, status, created_at
+                    FROM inbox_items
+                    WHERE user_id = ? AND status != 'archived'
+                    ORDER BY id DESC
+                    LIMIT ?
+                    """,
+                    (user_id, limit),
+                ).fetchall()
         return [dict(row) for row in rows]
 
     def get(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:

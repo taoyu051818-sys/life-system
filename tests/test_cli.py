@@ -51,6 +51,26 @@ class TestCliFlows(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("user not found: nobody", out)
 
+    def test_user_list_and_add(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            rc1, out1 = run_with_output(["--db", db_path, "user", "list"])
+            self.assertEqual(rc1, 0)
+            self.assertIn("xiaoyu", out1)
+            self.assertIn("partner", out1)
+
+            rc2, out2 = run_with_output(["--db", db_path, "user", "add", "alice", "--display-name", "Alice"])
+            self.assertEqual(rc2, 0)
+            self.assertIn("user added", out2)
+
+            rc3, out3 = run_with_output(["--db", db_path, "user", "add", "alice"])
+            self.assertEqual(rc3, 1)
+            self.assertIn("username already exists: alice", out3)
+
+            rc4, out4 = run_with_output(["--db", db_path, "user", "list"])
+            self.assertEqual(rc4, 0)
+            self.assertIn("alice", out4)
+
     def test_user_isolation_for_inbox_task_anki_lists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
@@ -106,6 +126,46 @@ class TestCliFlows(unittest.TestCase):
             self.assertNotIn("p-q", text_x)
             self.assertIn("p-q", text_p)
             self.assertNotIn("x-q", text_p)
+
+    def test_inbox_list_excludes_archived_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "capture", "active note"])
+            run_with_output(["--db", db_path, "capture", "to archive"])
+            run_with_output(["--db", db_path, "inbox", "triage", "2", "archive"])
+
+            _, out_default = run_with_output(["--db", db_path, "inbox", "list"])
+            _, out_archived = run_with_output(["--db", db_path, "inbox", "list", "--status", "archived"])
+            _, out_all = run_with_output(["--db", db_path, "inbox", "list", "--all"])
+            self.assertIn("active note", out_default)
+            self.assertNotIn("to archive", out_default)
+            self.assertIn("to archive", out_archived)
+            self.assertIn("to archive", out_all)
+
+    def test_datetime_validation_for_reminder_create_and_task_snooze(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "valid task"])
+
+            rc1, out1 = run_with_output(["--db", db_path, "reminder", "create", "1", "bad-date"])
+            self.assertEqual(rc1, 1)
+            self.assertIn("invalid remind_at", out1)
+
+            rc2, out2 = run_with_output(["--db", db_path, "task", "snooze", "1", "2026/03/08 09:00"])
+            self.assertEqual(rc2, 1)
+            self.assertIn("invalid snooze_until", out2)
+
+            rc3, _ = run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-08T09:00:00+08:00"])
+            self.assertEqual(rc3, 0)
+            rc4, _ = run_with_output(["--db", db_path, "task", "snooze", "1", "2026-03-07T00:00:00+00:00"])
+            self.assertEqual(rc4, 0)
+
+            with connection_ctx(Path(db_path)) as conn:
+                reminders = conn.execute("SELECT COUNT(*) AS c FROM reminders").fetchone()
+                self.assertEqual(reminders["c"], 1)
+                task = conn.execute("SELECT status, snooze_until FROM tasks WHERE id = 1").fetchone()
+                self.assertEqual(task["status"], "snoozed")
+                self.assertEqual(task["snooze_until"], "2026-03-07T00:00:00+00:00")
 
     def test_migration_backfills_existing_rows_to_xiaoyu(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

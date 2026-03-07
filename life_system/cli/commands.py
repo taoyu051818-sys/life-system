@@ -1,13 +1,16 @@
 import argparse
+import re
+from datetime import datetime
 from typing import Sequence
 
 from life_system.app.services import LifeSystemService
-from life_system.infra.db import connection_ctx, ensure_database, resolve_db_path
+from life_system.infra.db import connection_ctx, ensure_database, now_utc_iso, resolve_db_path
 from life_system.infra.repositories import UserRepository
 
 
 VALID_TASK_STATUSES = {"open", "snoozed", "done", "abandoned"}
 ABANDON_REASON_PRESETS = {"overwhelm", "wrong_timing", "no_value", "impulse", "blocked"}
+ISO_8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z)$")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,6 +21,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("init-db")
 
+    user = subparsers.add_parser("user")
+    user_sub = user.add_subparsers(dest="action", required=True)
+    user_sub.add_parser("list")
+    user_add = user_sub.add_parser("add")
+    user_add.add_argument("username")
+    user_add.add_argument("--display-name", default=None)
+
     capture = subparsers.add_parser("capture")
     capture.add_argument("content")
 
@@ -26,7 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
     inbox_capture = inbox_sub.add_parser("capture")
     inbox_capture.add_argument("content")
     inbox_list = inbox_sub.add_parser("list")
-    inbox_list.add_argument("--status", default=None)
+    status_group = inbox_list.add_mutually_exclusive_group()
+    status_group.add_argument("--status", default=None)
+    status_group.add_argument("--all", action="store_true")
     inbox_list.add_argument("--limit", type=int, default=50)
     inbox_triage = inbox_sub.add_parser("triage")
     inbox_triage.add_argument("inbox_id", type=int)
@@ -95,12 +107,46 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
     ensure_database(db_path)
 
     with connection_ctx(db_path) as conn:
-        user = UserRepository(conn).get_by_username(args.user)
+        user_repo = UserRepository(conn)
+        if args.entity == "user":
+            return _dispatch_user(user_repo, args)
+
+        user = user_repo.get_by_username(args.user)
         if user is None:
             print(f"user not found: {args.user}")
             return 1
         service = LifeSystemService(conn, user_id=user["id"], username=user["username"])
         return _dispatch(service, args)
+
+
+def _dispatch_user(user_repo: UserRepository, args: argparse.Namespace) -> int:
+    if args.action == "list":
+        rows = user_repo.list_all()
+        for row in rows:
+            print(f"{row['id']}\t{row['username']}\t{row['display_name']}")
+        return 0
+
+    if args.action == "add":
+        user_id = user_repo.add(username=args.username, display_name=args.display_name, created_at=now_utc_iso())
+        if user_id is None:
+            print(f"username already exists: {args.username}")
+            return 1
+        print(f"user added: id={user_id} username={args.username}")
+        return 0
+
+    return 1
+
+
+def _validate_iso8601(value: str, field_name: str) -> bool:
+    if not ISO_8601_PATTERN.match(value):
+        print(f"invalid {field_name}: must be ISO-8601 like 2026-03-08T09:00:00+08:00")
+        return False
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        print(f"invalid {field_name}: must be ISO-8601 like 2026-03-08T09:00:00+08:00")
+        return False
+    return True
 
 
 def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
@@ -118,7 +164,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         return 0
 
     if entity == "inbox" and action == "list":
-        items = service.list_inbox(status=args.status, limit=args.limit)
+        items = service.list_inbox(status=args.status, limit=args.limit, include_archived=args.all)
         for item in items:
             print(f"{item['id']}\t{item['status']}\t{item['created_at']}\t{item['content']}")
         return 0
@@ -170,6 +216,8 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         return 0 if ok else 1
 
     if entity == "task" and action == "snooze":
+        if not _validate_iso8601(args.snooze_until, "snooze_until"):
+            return 1
         ok = service.snooze_task(task_id=args.task_id, snooze_until=args.snooze_until)
         print("task snoozed" if ok else "task not found")
         return 0 if ok else 1
@@ -185,6 +233,8 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         return 0 if ok else 1
 
     if entity == "reminder" and action == "create":
+        if not _validate_iso8601(args.remind_at, "remind_at"):
+            return 1
         reminder_id = service.create_reminder(
             task_id=args.task_id,
             remind_at=args.remind_at,
