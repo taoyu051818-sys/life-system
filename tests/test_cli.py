@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -178,12 +179,12 @@ class TestCliFlows(unittest.TestCase):
             )
             self.assertEqual(rc1, 0)
             _, pending1 = run_with_output(["--db", db_path, "reminder", "pending-ack"])
-            self.assertIn("1\tsent", pending1)
+            self.assertIn("[1] sent", pending1)
 
             rc2, _ = run_with_output(["--db", db_path, "reminder", "ack", "1"])
             self.assertEqual(rc2, 0)
             _, pending2 = run_with_output(["--db", db_path, "reminder", "pending-ack"])
-            self.assertNotIn("1\tsent", pending2)
+            self.assertNotIn("[1] sent", pending2)
 
             _, show = run_with_output(["--db", db_path, "reminder", "show", "1"])
             self.assertIn("status: acknowledged", show)
@@ -262,6 +263,7 @@ class TestCliFlows(unittest.TestCase):
             _, history = run_with_output(["--db", db_path, "--user", "xiaoyu", "reminder", "history", "1"])
             self.assertIn("created", history)
             self.assertIn("sent", history)
+            self.assertIn("task_id=1", history)
 
     def test_journal_add_list_today(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -288,9 +290,48 @@ class TestCliFlows(unittest.TestCase):
             self.assertEqual(rc1, 0)
             _, out_list = run_with_output(["--db", db_path, "journal", "list"])
             self.assertIn("finished review", out_list)
-            self.assertIn("activity", out_list)
+            self.assertIn("[1] activity", out_list)
+            self.assertIn("E4 F3 M5", out_list)
             _, out_today = run_with_output(["--db", db_path, "journal", "today"])
             self.assertIn("finished review", out_today)
+
+    def test_journal_list_uses_dash_for_missing_levels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "journal", "add", "no levels", "--type", "checkin"])
+            _, out = run_with_output(["--db", db_path, "journal", "list"])
+            self.assertIn("E- F- M-", out)
+            self.assertNotIn("ENone", out)
+
+    def test_repeated_action_feedback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "capture", "archive me"])
+            rc1, out1 = run_with_output(["--db", db_path, "inbox", "triage", "1", "archive"])
+            rc2, out2 = run_with_output(["--db", db_path, "inbox", "triage", "1", "archive"])
+            self.assertEqual(rc1, 0)
+            self.assertEqual(rc2, 0)
+            self.assertIn("already archived", out2)
+
+            run_with_output(["--db", db_path, "task", "create", "repeat reminder"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+
+            _, ack1 = run_with_output(["--db", db_path, "reminder", "ack", "1"])
+            _, ack2 = run_with_output(["--db", db_path, "reminder", "ack", "1"])
+            self.assertIn("reminder acknowledged", ack1)
+            self.assertIn("already acknowledged", ack2)
+
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            _, skip1 = run_with_output(["--db", db_path, "reminder", "skip", "2"])
+            _, skip2 = run_with_output(["--db", db_path, "reminder", "skip", "2"])
+            self.assertIn("reminder skipped", skip1)
+            self.assertIn("already skipped", skip2)
+
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "snooze", "3", "2026-03-08T09:00:00+08:00"])
+            _, sn2 = run_with_output(["--db", db_path, "reminder", "snooze", "3", "2026-03-08T09:00:00+08:00"])
+            self.assertIn("already snoozed to 2026-03-08T09:00:00+08:00", sn2)
 
     def test_journal_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,6 +403,95 @@ class TestCliFlows(unittest.TestCase):
                 task_user = conn2.execute("SELECT user_id FROM tasks WHERE id = 1").fetchone()
                 self.assertEqual(inbox_user["user_id"], xiaoyu_id)
                 self.assertEqual(task_user["user_id"], xiaoyu_id)
+
+    def test_summary_today_and_day(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "sum task"])
+            run_with_output(["--db", db_path, "capture", "sum inbox"])
+            run_with_output(["--db", db_path, "inbox", "triage", "1", "archive"])
+            run_with_output(["--db", db_path, "anki", "create", "manual", "Q", "A"])
+            run_with_output(["--db", db_path, "anki", "export-csv", str(Path(tmp) / "anki.csv")])
+            run_with_output(["--db", db_path, "journal", "add", "today activity", "--type", "activity", "--energy", "4"])
+
+            rc1, out1 = run_with_output(["--db", db_path, "summary", "today"])
+            self.assertEqual(rc1, 0)
+            self.assertIn("每日总结", out1)
+            self.assertIn("今日概览", out1)
+            self.assertIn("日志条目: 1", out1)
+
+            today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+            rc2, out2 = run_with_output(["--db", db_path, "summary", "day", "--date", today])
+            self.assertEqual(rc2, 0)
+            self.assertIn(today, out2)
+
+    def test_summary_invalid_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            rc, out = run_with_output(["--db", db_path, "summary", "day", "--date", "2026/03/07"])
+            self.assertEqual(rc, 1)
+            self.assertIn("invalid date: must be YYYY-MM-DD", out)
+
+    def test_summary_multi_user_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "journal", "add", "x log", "--type", "win"])
+            run_with_output(["--db", db_path, "--user", "partner", "journal", "add", "p log", "--type", "win"])
+
+            _, out_x = run_with_output(["--db", db_path, "--user", "xiaoyu", "summary", "today"])
+            _, out_p = run_with_output(["--db", db_path, "--user", "partner", "summary", "today"])
+            self.assertIn("x log", out_x)
+            self.assertNotIn("p log", out_x)
+            self.assertIn("p log", out_p)
+            self.assertNotIn("x log", out_p)
+
+    def test_summary_state_snapshot_with_and_without_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "journal", "add", "stateful", "--type", "checkin", "--energy", "4", "--focus", "3", "--mood", "5"])
+            _, out1 = run_with_output(["--db", db_path, "summary", "today"])
+            self.assertIn("平均能量", out1)
+
+        with tempfile.TemporaryDirectory() as tmp2:
+            db_path2 = str(Path(tmp2) / "life2.db")
+            run_with_output(["--db", db_path2, "journal", "add", "no state", "--type", "activity"])
+            _, out2 = run_with_output(["--db", db_path2, "summary", "today"])
+            self.assertIn("无状态数据", out2)
+
+    def test_summary_uses_asia_shanghai_day_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "init-db"])
+            with connection_ctx(db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO tasks(user_id, title, status, priority, created_at, updated_at)
+                    VALUES(1, 'boundary task', 'open', 3, '2026-03-06T16:30:00+00:00', '2026-03-06T16:30:00+00:00')
+                    """
+                )
+                conn.commit()
+
+            _, out_cst_day = run_with_output(["--db", str(db_path), "summary", "day", "--date", "2026-03-07"])
+            _, out_prev = run_with_output(["--db", str(db_path), "summary", "day", "--date", "2026-03-06"])
+            self.assertIn("任务: 新建=1", out_cst_day)
+            self.assertIn("任务: 新建=0", out_prev)
+
+    def test_summary_chinese_labels_and_sent_retried_split(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "task", "create", "r task"])
+            run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
+            run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:10:00+00:00"])
+
+            _, out = run_with_output(["--db", db_path, "summary", "day", "--date", "2026-03-07"])
+            self.assertIn("收件箱:", out)
+            self.assertIn("任务:", out)
+            self.assertIn("提醒:", out)
+            self.assertIn("未闭环事项", out)
+            self.assertNotIn("inbox:", out)
+            self.assertIn("首次发送=1", out)
+            self.assertIn("重试=1", out)
 
 
 if __name__ == "__main__":

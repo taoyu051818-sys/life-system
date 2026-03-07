@@ -1,4 +1,5 @@
 import argparse
+import json
 import re
 from datetime import datetime
 from typing import Sequence
@@ -12,10 +13,11 @@ VALID_TASK_STATUSES = {"open", "snoozed", "done", "abandoned"}
 ABANDON_REASON_PRESETS = {"overwhelm", "wrong_timing", "no_value", "impulse", "blocked"}
 VALID_JOURNAL_TYPES = {"activity", "reflection", "win", "checkin"}
 ISO_8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}|Z)$")
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="life")
+    parser = argparse.ArgumentParser(prog="life", description="Life System CLI")
     parser.add_argument("--db", default=None, help="SQLite DB path (default: data/life_system.db)")
     parser.add_argument("--user", default="xiaoyu", help="Username scope (default: xiaoyu)")
     subparsers = parser.add_subparsers(dest="entity", required=True)
@@ -32,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     capture = subparsers.add_parser("capture")
     capture.add_argument("content")
 
-    inbox = subparsers.add_parser("inbox")
+    inbox = subparsers.add_parser("inbox", help="Capture and triage inbox items")
     inbox_sub = inbox.add_subparsers(dest="action", required=True)
     inbox_capture = inbox_sub.add_parser("capture")
     inbox_capture.add_argument("content")
@@ -41,7 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     status_group.add_argument("--status", default=None)
     status_group.add_argument("--all", action="store_true")
     inbox_list.add_argument("--limit", type=int, default=50)
-    inbox_triage = inbox_sub.add_parser("triage")
+    inbox_triage = inbox_sub.add_parser("triage", help="Route inbox item to task/anki/archive")
     inbox_triage.add_argument("inbox_id", type=int)
     inbox_triage.add_argument("target", choices=["task", "anki", "archive"])
 
@@ -67,29 +69,29 @@ def build_parser() -> argparse.ArgumentParser:
     task_abandon.add_argument("--reason-text", default=None)
     task_abandon.add_argument("--energy-level", type=int, default=None)
 
-    reminder = subparsers.add_parser("reminder")
+    reminder = subparsers.add_parser("reminder", help="Reminder delivery and acknowledgement loop")
     reminder_sub = reminder.add_subparsers(dest="action", required=True)
     reminder_create = reminder_sub.add_parser("create")
     reminder_create.add_argument("task_id", type=int)
     reminder_create.add_argument("remind_at", help="ISO timestamp")
     reminder_create.add_argument("--channel", default="cli")
-    reminder_due = reminder_sub.add_parser("due")
+    reminder_due = reminder_sub.add_parser("due", help="Show due reminders; use --send to mark sent/retried")
     reminder_due.add_argument("--send", action="store_true")
     reminder_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     reminder_due.add_argument("--limit", type=int, default=50)
-    reminder_pending_ack = reminder_sub.add_parser("pending-ack")
+    reminder_pending_ack = reminder_sub.add_parser("pending-ack", help="List reminders waiting for acknowledgement")
     reminder_pending_ack.add_argument("--limit", type=int, default=50)
-    reminder_ack = reminder_sub.add_parser("ack")
+    reminder_ack = reminder_sub.add_parser("ack", help="Acknowledge a reminder")
     reminder_ack.add_argument("reminder_id", type=int)
-    reminder_snooze = reminder_sub.add_parser("snooze")
+    reminder_snooze = reminder_sub.add_parser("snooze", help="Snooze reminder to a new datetime")
     reminder_snooze.add_argument("reminder_id", type=int)
     reminder_snooze.add_argument("remind_at", help="ISO timestamp")
-    reminder_skip = reminder_sub.add_parser("skip")
+    reminder_skip = reminder_sub.add_parser("skip", help="Skip reminder")
     reminder_skip.add_argument("reminder_id", type=int)
     reminder_skip.add_argument("--reason", default=None)
-    reminder_show = reminder_sub.add_parser("show")
+    reminder_show = reminder_sub.add_parser("show", help="Show reminder details")
     reminder_show.add_argument("reminder_id", type=int)
-    reminder_history = reminder_sub.add_parser("history")
+    reminder_history = reminder_sub.add_parser("history", help="Show reminder event history")
     reminder_history.add_argument("reminder_id", type=int)
 
     anki = subparsers.add_parser("anki")
@@ -107,9 +109,9 @@ def build_parser() -> argparse.ArgumentParser:
     anki_export = anki_sub.add_parser("export-csv")
     anki_export.add_argument("path")
 
-    journal = subparsers.add_parser("journal")
+    journal = subparsers.add_parser("journal", help="Record activity/reflection/wins/checkins")
     journal_sub = journal.add_subparsers(dest="action", required=True)
-    journal_add = journal_sub.add_parser("add")
+    journal_add = journal_sub.add_parser("add", help="Add a journal entry")
     journal_add.add_argument("content")
     journal_add.add_argument("--type", dest="entry_type", required=True, choices=sorted(VALID_JOURNAL_TYPES))
     journal_add.add_argument("--task-id", type=int, default=None)
@@ -118,12 +120,18 @@ def build_parser() -> argparse.ArgumentParser:
     journal_add.add_argument("--focus", type=int, default=None)
     journal_add.add_argument("--mood", type=int, default=None)
     journal_add.add_argument("--tags", default=None)
-    journal_list = journal_sub.add_parser("list")
+    journal_list = journal_sub.add_parser("list", help="List recent journal entries")
     journal_list.add_argument("--limit", type=int, default=50)
     journal_list.add_argument("--type", dest="entry_type", default=None, choices=sorted(VALID_JOURNAL_TYPES))
-    journal_today = journal_sub.add_parser("today")
+    journal_today = journal_sub.add_parser("today", help="List today's journal entries")
     journal_today.add_argument("--limit", type=int, default=50)
     journal_today.add_argument("--type", dest="entry_type", default=None, choices=sorted(VALID_JOURNAL_TYPES))
+
+    summary = subparsers.add_parser("summary", help="Daily evidence-first summary")
+    summary_sub = summary.add_subparsers(dest="action", required=True)
+    summary_sub.add_parser("today", help="Show today's summary")
+    summary_day = summary_sub.add_parser("day", help="Show summary for a specific day")
+    summary_day.add_argument("--date", required=True, help="YYYY-MM-DD")
 
     return parser
 
@@ -192,6 +200,117 @@ def _validate_level(value: int | None, field_name: str) -> bool:
     return False
 
 
+def _validate_date_yyyy_mm_dd(value: str) -> bool:
+    if not DATE_PATTERN.match(value):
+        print("invalid date: must be YYYY-MM-DD")
+        return False
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        print("invalid date: must be YYYY-MM-DD")
+        return False
+    return True
+
+
+def _fmt_optional(value: object) -> str:
+    return "-" if value is None else str(value)
+
+
+def _fmt_journal_levels(row: dict[str, object]) -> str:
+    return f"E{_fmt_optional(row.get('energy_level'))} F{_fmt_optional(row.get('focus_level'))} M{_fmt_optional(row.get('mood_level'))}"
+
+
+def _print_journal_entries(rows: list[dict[str, object]]) -> None:
+    for row in rows:
+        print(f"[{row['id']}] {row['entry_type']} | {row['created_at']} | {_fmt_journal_levels(row)}")
+        print(f"  {row['content']}")
+
+
+def _print_kv_block(item: dict[str, object], keys: list[str]) -> None:
+    for key in keys:
+        print(f"{key}: {item.get(key)}")
+
+
+def _format_history_payload(payload: str | None) -> str:
+    if not payload:
+        return "-"
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return payload
+    if isinstance(data, dict):
+        parts = [f"{k}={data[k]}" for k in sorted(data)]
+        return ", ".join(parts) if parts else "-"
+    return str(data)
+
+
+def _print_summary(summary: dict[str, object]) -> None:
+    day = summary["day"]
+    overview = summary["overview"]
+    grouped = summary["journal_grouped"]
+    state = summary["state_snapshot"]
+    loops = summary["open_loops"]
+    note = summary["note"]
+
+    print(f"== 每日总结 | {day} ==")
+    print("【今日概览】")
+    print(
+        "收件箱: 新增={inbox_captured}, 已分拣={inbox_triaged}, 已归档={inbox_archived}".format(**overview)
+    )
+    print(
+        "任务: 新建={tasks_created}, 完成={tasks_done}, 延后={tasks_snoozed}, 放弃={tasks_abandoned}".format(
+            **overview
+        )
+    )
+    print(
+        "提醒: 首次发送={reminders_sent}, 重试={reminders_retried}, 已确认={reminders_acknowledged}, 已跳过={reminders_skipped}, 已过期={reminders_expired}".format(
+            **overview
+        )
+    )
+    print("Anki: 新建草稿={anki_created}, 已导出={anki_exported}".format(**overview))
+    print("日志条目: {journal_count}".format(**overview))
+    print("")
+
+    print("【日志亮点】")
+    has_journal = False
+    type_labels = {
+        "activity": "活动",
+        "reflection": "复盘",
+        "win": "收获",
+        "checkin": "签到",
+    }
+    for et in ("activity", "reflection", "win", "checkin"):
+        rows = grouped.get(et, [])
+        if not rows:
+            continue
+        has_journal = True
+        print(f"- {type_labels.get(et, et)}:")
+        for row in rows:
+            print(f"  [{row['id']}] {row['created_at']} | {row['content']}")
+    if not has_journal:
+        print("- 今天暂无日志记录")
+    print("")
+
+    print("【状态快照】")
+    if state["avg_energy"] is None and state["avg_focus"] is None and state["avg_mood"] is None:
+        print("无状态数据")
+    else:
+        e = "-" if state["avg_energy"] is None else f"{float(state['avg_energy']):.2f}"
+        f = "-" if state["avg_focus"] is None else f"{float(state['avg_focus']):.2f}"
+        m = "-" if state["avg_mood"] is None else f"{float(state['avg_mood']):.2f}"
+        print(f"平均能量: {e} | 平均专注: {f} | 平均心情: {m}")
+    print("")
+
+    print("【未闭环事项】")
+    print(f"开放任务: {loops['open_tasks']}")
+    print(f"延后任务: {loops['snoozed_tasks']}")
+    print(f"待确认提醒: {loops['pending_ack']}")
+    print("")
+
+    print("【今日短注】")
+    print(note)
+
+
 def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     entity = args.entity
     action = getattr(args, "action", None)
@@ -227,9 +346,15 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
                 return 1
             print(f"inbox triaged to anki: inbox_id={args.inbox_id} draft_id={draft_id}")
             return 0
-        ok = service.archive_inbox(args.inbox_id)
-        print("inbox archived" if ok else "inbox item not found")
-        return 0 if ok else 1
+        status = service.archive_inbox(args.inbox_id)
+        if status == "archived":
+            print("inbox archived")
+            return 0
+        if status == "already_archived":
+            print("already archived")
+            return 0
+        print("inbox item not found")
+        return 1
 
     if entity == "task" and action == "create":
         task_id = service.create_task(
@@ -249,7 +374,8 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         items = service.list_tasks(status=args.status, limit=args.limit)
         for task in items:
             print(
-                f"{task['id']}\t{task['status']}\tp{task['priority']}\t{task['due_at']}\t{task['snooze_until']}\t{task['title']}"
+                f"[{task['id']}] {task['status']} | p{task['priority']} | due={_fmt_optional(task['due_at'])} "
+                f"| snooze={_fmt_optional(task['snooze_until'])} | {task['title']}"
             )
         return 0
 
@@ -293,8 +419,9 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         items = service.due_reminders(now=args.now, limit=args.limit, send=args.send)
         for item in items:
             print(
-                f"{item['id']}\t{item['status']}\tattempt={item['attempt_count']}\t"
-                f"retry={item['next_retry_at']}\ttask={item['task_id']}\t{item['remind_at']}\t{item['task_title']}"
+                f"[{item['id']}] {item['status']} | attempt={item['attempt_count']} "
+                f"| retry={_fmt_optional(item['next_retry_at'])} | remind_at={item['remind_at']} "
+                f"| task={item['task_id']} {item['task_title']}"
             )
         if args.send:
             print(f"reminders processed: {len(items)}")
@@ -304,34 +431,52 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         items = service.list_pending_ack_reminders(limit=args.limit)
         for item in items:
             print(
-                f"{item['id']}\t{item['status']}\tattempt={item['attempt_count']}\t"
-                f"retry={item['next_retry_at']}\ttask={item['task_id']}\t{item['task_title']}"
+                f"[{item['id']}] {item['status']} | attempt={item['attempt_count']} "
+                f"| retry={_fmt_optional(item['next_retry_at'])} | task={item['task_id']} {item['task_title']}"
             )
         return 0
 
     if entity == "reminder" and action == "ack":
-        ok = service.ack_reminder(args.reminder_id)
-        print("reminder acknowledged" if ok else "reminder not found")
-        return 0 if ok else 1
+        status = service.ack_reminder(args.reminder_id)
+        if status == "acknowledged":
+            print("reminder acknowledged")
+            return 0
+        if status == "already_acknowledged":
+            print("already acknowledged")
+            return 0
+        print("reminder not found")
+        return 1
 
     if entity == "reminder" and action == "snooze":
         if not _validate_iso8601(args.remind_at, "remind_at"):
             return 1
-        ok = service.snooze_reminder(args.reminder_id, args.remind_at)
-        print("reminder snoozed" if ok else "reminder not found")
-        return 0 if ok else 1
+        status = service.snooze_reminder(args.reminder_id, args.remind_at)
+        if status == "snoozed":
+            print("reminder snoozed")
+            return 0
+        if status == "already_snoozed_same":
+            print(f"already snoozed to {args.remind_at}")
+            return 0
+        print("reminder not found")
+        return 1
 
     if entity == "reminder" and action == "skip":
-        ok = service.skip_reminder(args.reminder_id, reason=args.reason)
-        print("reminder skipped" if ok else "reminder not found")
-        return 0 if ok else 1
+        status = service.skip_reminder(args.reminder_id, reason=args.reason)
+        if status == "skipped":
+            print("reminder skipped")
+            return 0
+        if status == "already_skipped":
+            print("already skipped")
+            return 0
+        print("reminder not found")
+        return 1
 
     if entity == "reminder" and action == "show":
         item = service.show_reminder(args.reminder_id)
         if item is None:
             print("reminder not found")
             return 1
-        for key in [
+        _print_kv_block(item, [
             "id",
             "task_id",
             "task_title",
@@ -348,8 +493,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             "skip_reason",
             "message_ref",
             "created_at",
-        ]:
-            print(f"{key}: {item.get(key)}")
+        ])
         return 0
 
     if entity == "reminder" and action == "history":
@@ -358,7 +502,8 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             print("reminder not found")
             return 1
         for ev in events:
-            print(f"{ev['id']}\t{ev['event_at']}\t{ev['event_type']}\t{ev['payload']}")
+            payload_text = _format_history_payload(ev["payload"])
+            print(f"[{ev['id']}] {ev['event_at']} | {ev['event_type']} | {payload_text}")
         return 0
 
     if entity == "anki" and action == "create":
@@ -408,20 +553,24 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
 
     if entity == "journal" and action == "list":
         rows = service.list_journal(limit=args.limit, entry_type=args.entry_type)
-        for row in rows:
-            print(
-                f"{row['id']}\t{row['entry_type']}\tE{row['energy_level']}/F{row['focus_level']}/M{row['mood_level']}"
-                f"\t{row['created_at']}\t{row['content']}"
-            )
+        _print_journal_entries(rows)
         return 0
 
     if entity == "journal" and action == "today":
         rows = service.today_journal(limit=args.limit, entry_type=args.entry_type)
-        for row in rows:
-            print(
-                f"{row['id']}\t{row['entry_type']}\tE{row['energy_level']}/F{row['focus_level']}/M{row['mood_level']}"
-                f"\t{row['created_at']}\t{row['content']}"
-            )
+        _print_journal_entries(rows)
+        return 0
+
+    if entity == "summary" and action == "today":
+        summary = service.build_today_summary()
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "day":
+        if not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_day_summary(args.date)
+        _print_summary(summary)
         return 0
 
     parser = build_parser()

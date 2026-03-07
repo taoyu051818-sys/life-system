@@ -18,6 +18,7 @@ from life_system.infra.repositories import (
 )
 
 RETRY_MINUTES = [10, 30, 120]
+CST = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
 class LifeSystemService:
@@ -86,11 +87,17 @@ class LifeSystemService:
         self.event_logger.log("inbox_triaged_to_anki", {"inbox_item_id": inbox_item_id, "draft_id": draft_id})
         return draft_id
 
-    def archive_inbox(self, inbox_item_id: int) -> bool:
+    def archive_inbox(self, inbox_item_id: int) -> str:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "archived":
+            return "already_archived"
         updated = self.inbox_repo.mark_archived(user_id=self.user_id, inbox_item_id=inbox_item_id)
-        if updated:
-            self.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
-        return bool(updated)
+        if not updated:
+            return "not_found"
+        self.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
+        return "archived"
 
     def create_task(
         self,
@@ -204,36 +211,42 @@ class LifeSystemService:
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
 
-    def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> bool:
+    def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> str:
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
-            return False
+            return "not_found"
+        if item["status"] == "acknowledged":
+            return "already_acknowledged"
         now = now_utc_iso()
         updated = self.reminder_repo.mark_acknowledged(reminder_id=reminder_id, ack_at=now, acked_via=acked_via)
         if not updated:
-            return False
+            return "not_found"
         self._log_reminder_event(reminder_id, "acknowledged", {"acked_via": acked_via})
-        return True
+        return "acknowledged"
 
-    def snooze_reminder(self, reminder_id: int, remind_at: str) -> bool:
+    def snooze_reminder(self, reminder_id: int, remind_at: str) -> str:
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
-            return False
+            return "not_found"
+        if item["status"] == "snoozed" and item["remind_at"] == remind_at:
+            return "already_snoozed_same"
         updated = self.reminder_repo.mark_snoozed(reminder_id=reminder_id, remind_at=remind_at)
         if not updated:
-            return False
+            return "not_found"
         self._log_reminder_event(reminder_id, "snoozed", {"remind_at": remind_at})
-        return True
+        return "snoozed"
 
-    def skip_reminder(self, reminder_id: int, reason: str | None = None) -> bool:
+    def skip_reminder(self, reminder_id: int, reason: str | None = None) -> str:
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
-            return False
+            return "not_found"
+        if item["status"] == "skipped":
+            return "already_skipped"
         updated = self.reminder_repo.mark_skipped(reminder_id=reminder_id, skip_reason=reason)
         if not updated:
-            return False
+            return "not_found"
         self._log_reminder_event(reminder_id, "skipped", {"reason": reason})
-        return True
+        return "skipped"
 
     def show_reminder(self, reminder_id: int) -> dict[str, Any] | None:
         return self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -289,6 +302,7 @@ class LifeSystemService:
             writer = DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
+        self.anki_repo.mark_exported_for_user(user_id=self.user_id, exported_at=now_utc_iso())
         self.event_logger.log("anki_drafts_exported_csv", {"path": str(path), "count": len(rows)})
         return len(rows)
 
@@ -329,6 +343,69 @@ class LifeSystemService:
             limit=limit,
             entry_type=entry_type,
         )
+
+    def build_day_summary(self, day: str) -> dict[str, Any]:
+        start_utc, end_utc = self._cst_day_to_utc_range(day)
+        overview = {
+            "inbox_captured": self.inbox_repo.count_captured_in_range(self.user_id, start_utc, end_utc),
+            "inbox_triaged": self.inbox_repo.count_triaged_in_range(self.user_id, start_utc, end_utc),
+            "inbox_archived": self.inbox_repo.count_archived_in_range(self.user_id, start_utc, end_utc),
+            "tasks_created": self.task_repo.count_created_in_range(self.user_id, start_utc, end_utc),
+            "tasks_done": self.task_repo.count_done_in_range(self.user_id, start_utc, end_utc),
+            "tasks_snoozed": self.task_repo.count_snoozed_in_range(self.user_id, start_utc, end_utc),
+            "tasks_abandoned": self.task_repo.count_abandoned_in_range(self.user_id, start_utc, end_utc),
+            "reminders_sent": self.reminder_event_repo.count_in_range_and_type(self.user_id, start_utc, end_utc, "sent"),
+            "reminders_retried": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "retried"
+            ),
+            "reminders_acknowledged": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "acknowledged"
+            ),
+            "reminders_skipped": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "skipped"
+            ),
+            "reminders_expired": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "expired"
+            ),
+            "anki_created": self.anki_repo.count_created_in_range(self.user_id, start_utc, end_utc),
+            "anki_exported": self.anki_repo.count_exported_in_range(self.user_id, start_utc, end_utc),
+            "journal_count": self.journal_repo.count_in_range(self.user_id, start_utc, end_utc),
+        }
+
+        journal_rows = self.journal_repo.list_in_range(self.user_id, start_utc, end_utc, limit=8)
+        grouped: dict[str, list[dict[str, Any]]] = {"activity": [], "reflection": [], "win": [], "checkin": []}
+        for row in journal_rows:
+            et = row["entry_type"]
+            if et in grouped and len(grouped[et]) < 2:
+                grouped[et].append(row)
+
+        state = self.journal_repo.avg_state_in_range(self.user_id, start_utc, end_utc)
+        state_snapshot = {
+            "avg_energy": state.get("avg_energy"),
+            "avg_focus": state.get("avg_focus"),
+            "avg_mood": state.get("avg_mood"),
+        }
+
+        open_loops = {
+            "open_tasks": self.task_repo.count_by_status(self.user_id, "open"),
+            "snoozed_tasks": self.task_repo.count_by_status(self.user_id, "snoozed"),
+            "pending_ack": len(self.reminder_repo.list_pending_ack(self.user_id, limit=10000)),
+        }
+
+        note = self._build_summary_note(overview, open_loops)
+
+        return {
+            "day": day,
+            "overview": overview,
+            "journal_grouped": grouped,
+            "state_snapshot": state_snapshot,
+            "open_loops": open_loops,
+            "note": note,
+        }
+
+    def build_today_summary(self) -> dict[str, Any]:
+        day = datetime.now(CST).date().isoformat()
+        return self.build_day_summary(day)
 
     def _send_or_expire(self, item: dict[str, Any], now_dt: datetime) -> dict[str, Any] | None:
         reminder_id = item["id"]
@@ -398,3 +475,24 @@ class LifeSystemService:
 
     def _to_iso(self, value: datetime) -> str:
         return value.replace(microsecond=0).isoformat()
+
+    def _cst_day_to_utc_range(self, day: str) -> tuple[str, str]:
+        local_start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=CST)
+        local_end = local_start + timedelta(days=1)
+        utc_start = local_start.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        utc_end = local_end.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        return utc_start, utc_end
+
+    def _build_summary_note(self, overview: dict[str, int], open_loops: dict[str, int]) -> str:
+        done = overview["tasks_done"]
+        journal_count = overview["journal_count"]
+        pending_ack = open_loops["pending_ack"]
+        if done > 0 and journal_count > 0:
+            return "今天已有可见进展，任务完成与记录都在累积。"
+        if done > 0:
+            return "今天有任务完成记录，建议继续保持当前节奏。"
+        if journal_count > 0:
+            return "今天已有日志证据，建议继续保持小步记录。"
+        if pending_ack > 0:
+            return "当前还有待确认提醒，可先清理提醒闭环。"
+        return "今天的证据记录较少，可先补一条简短活动或复盘。"

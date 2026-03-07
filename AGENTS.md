@@ -10,3 +10,9 @@
 - Prefer small safe changes
 - Update README and tests together
 - Validate new CLI inputs strictly
+
+## CLI output conventions
+- `list`: compact scan-friendly rows.
+- `show`: key/value block.
+- `history`: time-ordered readable event stream.
+- For repeated state-changing actions, prefer status-aware feedback such as `already ...`.

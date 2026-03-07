@@ -68,6 +68,10 @@ python -m life_system.main journal add "small win today" --type win
 python -m life_system.main journal list --limit 20
 python -m life_system.main journal list --type reflection
 python -m life_system.main journal today
+
+# Summary
+python -m life_system.main summary today
+python -m life_system.main summary day --date 2026-03-07
 ```
 
 ## Datetime Validation
@@ -95,6 +99,21 @@ python -m life_system.main journal today
 - win
 - checkin
 
+## CLI Output Notes
+
+- `list` commands use compact scan-friendly rows.
+- `show` commands use key/value blocks.
+- `history` commands use time-ordered event lines.
+- Repeated state changes return status-aware feedback (for example `already acknowledged`, `already archived`).
+
+## Summary Output
+
+- `summary today` / `summary day` output is Chinese by default.
+- Summary day boundaries are hardcoded to Asia/Shanghai (北京时间).
+- Summary is evidence-first and user-scoped.
+- Includes overview counts, journal highlights, state snapshot, open loops, and a short conservative note.
+- Reminder overview splits first send and retry separately.
+
 ## Abandonment Reason Presets
 
 - overwhelm
@@ -103,4 +122,6 @@ python -m life_system.main journal today
 - impulse
 - blocked
 
-##retries are scheduled step-by-step when the processor runs
+## Retries
+
+- Retries are scheduled step-by-step when `reminder due --send` runs.

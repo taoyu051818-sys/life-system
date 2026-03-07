@@ -127,13 +127,55 @@ class InboxRepository:
         cur = self.conn.execute(
             """
             UPDATE inbox_items
-            SET status = 'archived'
+            SET status = 'archived', archived_at = ?
             WHERE id = ? AND user_id = ?
             """,
-            (inbox_item_id, user_id),
+            (created_at_now(), inbox_item_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount
+
+    def count_captured_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND created_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_captured_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND created_at >= ? AND created_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_triaged_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND triaged_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_triaged_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND triaged_at >= ? AND triaged_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_archived_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND archived_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_archived_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND archived_at >= ? AND archived_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
 
 
 class TaskRepository:
@@ -235,6 +277,73 @@ class TaskRepository:
         if row is None:
             return None
         return dict(row)
+
+    def count_created_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND created_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_created_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND created_at >= ? AND created_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_done_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND completed_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_done_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND completed_at >= ? AND completed_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_snoozed_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = 'snoozed' AND updated_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_snoozed_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM tasks
+            WHERE user_id = ? AND status = 'snoozed' AND updated_at >= ? AND updated_at < ?
+            """,
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_abandoned_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND abandoned_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_abandoned_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND abandoned_at >= ? AND abandoned_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_by_status(self, user_id: int, status: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = ?",
+            (user_id, status),
+        ).fetchone()
+        return int(row["c"])
 
 
 class ReminderRepository:
@@ -439,6 +548,28 @@ class ReminderEventRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def count_by_day_and_type(self, user_id: int, day: str, event_type: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM reminder_events
+            WHERE user_id = ? AND event_type = ? AND event_at LIKE ?
+            """,
+            (user_id, event_type, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_in_range_and_type(self, user_id: int, start_iso: str, end_iso: str, event_type: str) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM reminder_events
+            WHERE user_id = ? AND event_type = ? AND event_at >= ? AND event_at < ?
+            """,
+            (user_id, event_type, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
 
 class AbandonmentLogRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -527,6 +658,46 @@ class AnkiDraftRepository:
             (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def mark_exported_for_user(self, user_id: int, exported_at: str) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE anki_drafts
+            SET status = 'exported', exported_at = ?
+            WHERE user_id = ? AND status IN ('draft', 'ready', 'failed')
+            """,
+            (exported_at, user_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def count_created_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_created_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at >= ? AND created_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_exported_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND exported_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_exported_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND exported_at >= ? AND exported_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
 
 
 class JournalRepository:
@@ -627,3 +798,82 @@ class JournalRepository:
                 (user_id, f"{day_prefix}%", limit),
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def count_by_day(self, user_id: int, day: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM journal_entries WHERE user_id = ? AND created_at LIKE ?",
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM journal_entries WHERE user_id = ? AND created_at >= ? AND created_at < ?",
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def avg_state_by_day(self, user_id: int, day: str) -> dict[str, Any]:
+        row = self.conn.execute(
+            """
+            SELECT
+              AVG(energy_level) AS avg_energy,
+              AVG(focus_level) AS avg_focus,
+              AVG(mood_level) AS avg_mood
+            FROM journal_entries
+            WHERE user_id = ? AND created_at LIKE ?
+            """,
+            (user_id, f"{day}%"),
+        ).fetchone()
+        return dict(row)
+
+    def avg_state_in_range(self, user_id: int, start_iso: str, end_iso: str) -> dict[str, Any]:
+        row = self.conn.execute(
+            """
+            SELECT
+              AVG(energy_level) AS avg_energy,
+              AVG(focus_level) AS avg_focus,
+              AVG(mood_level) AS avg_mood
+            FROM journal_entries
+            WHERE user_id = ? AND created_at >= ? AND created_at < ?
+            """,
+            (user_id, start_iso, end_iso),
+        ).fetchone()
+        return dict(row)
+
+    def list_by_day(self, user_id: int, day: str, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, entry_type, content, related_task_id, related_inbox_id,
+              energy_level, focus_level, mood_level, tags, created_at
+            FROM journal_entries
+            WHERE user_id = ? AND created_at LIKE ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, f"{day}%", limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_in_range(self, user_id: int, start_iso: str, end_iso: str, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, entry_type, content, related_task_id, related_inbox_id,
+              energy_level, focus_level, mood_level, tags, created_at
+            FROM journal_entries
+            WHERE user_id = ? AND created_at >= ? AND created_at < ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, start_iso, end_iso, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def created_at_now() -> str:
+    # local import to avoid cyclic dependency
+    from life_system.infra.db import now_utc_iso
+
+    return now_utc_iso()
