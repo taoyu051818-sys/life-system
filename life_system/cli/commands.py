@@ -6,6 +6,7 @@ from life_system.infra.db import connection_ctx, ensure_database, resolve_db_pat
 
 
 VALID_TASK_STATUSES = {"open", "snoozed", "done", "abandoned"}
+ABANDON_REASON_PRESETS = {"overwhelm", "wrong_timing", "no_value", "impulse", "blocked"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +26,9 @@ def build_parser() -> argparse.ArgumentParser:
     inbox_list = inbox_sub.add_parser("list")
     inbox_list.add_argument("--status", default=None)
     inbox_list.add_argument("--limit", type=int, default=50)
+    inbox_triage = inbox_sub.add_parser("triage")
+    inbox_triage.add_argument("inbox_id", type=int)
+    inbox_triage.add_argument("target", choices=["task", "anki", "archive"])
 
     task = subparsers.add_parser("task")
     task_sub = task.add_subparsers(dest="action", required=True)
@@ -44,7 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
     task_snooze.add_argument("snooze_until", help="ISO timestamp")
     task_abandon = task_sub.add_parser("abandon")
     task_abandon.add_argument("task_id", type=int)
-    task_abandon.add_argument("--reason-code", default=None)
+    task_abandon.add_argument("--reason-code", default=None, choices=sorted(ABANDON_REASON_PRESETS))
     task_abandon.add_argument("--reason-text", default=None)
     task_abandon.add_argument("--energy-level", type=int, default=None)
 
@@ -70,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     anki_list = anki_sub.add_parser("list")
     anki_list.add_argument("--status", default=None)
     anki_list.add_argument("--limit", type=int, default=50)
+    anki_export = anki_sub.add_parser("export-csv")
+    anki_export.add_argument("path")
 
     return parser
 
@@ -110,6 +116,25 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         for item in items:
             print(f"{item['id']}\t{item['status']}\t{item['created_at']}\t{item['content']}")
         return 0
+
+    if entity == "inbox" and action == "triage":
+        if args.target == "task":
+            task_id = service.triage_inbox_to_task(args.inbox_id)
+            if task_id is None:
+                print("inbox item not found")
+                return 1
+            print(f"inbox triaged to task: inbox_id={args.inbox_id} task_id={task_id}")
+            return 0
+        if args.target == "anki":
+            draft_id = service.triage_inbox_to_anki(args.inbox_id)
+            if draft_id is None:
+                print("inbox item not found")
+                return 1
+            print(f"inbox triaged to anki: inbox_id={args.inbox_id} draft_id={draft_id}")
+            return 0
+        ok = service.archive_inbox(args.inbox_id)
+        print("inbox archived" if ok else "inbox item not found")
+        return 0 if ok else 1
 
     if entity == "task" and action == "create":
         task_id = service.create_task(
@@ -183,6 +208,11 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             print(
                 f"{item['id']}\t{item['status']}\t{item['deck_name']}\t{item['source_type']}:{item['source_id']}"
             )
+        return 0
+
+    if entity == "anki" and action == "export-csv":
+        count = service.export_anki_drafts_csv(args.path)
+        print(f"anki drafts exported: count={count} path={args.path}")
         return 0
 
     parser = build_parser()

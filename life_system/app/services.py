@@ -1,4 +1,6 @@
 import sqlite3
+from csv import DictWriter
+from pathlib import Path
 from typing import Any
 
 from life_system.domain.ports import EventLogger, NullEventLogger
@@ -28,6 +30,34 @@ class LifeSystemService:
 
     def list_inbox(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return self.inbox_repo.list(status=status, limit=limit)
+
+    def triage_inbox_to_task(self, inbox_item_id: int) -> int | None:
+        item = self.inbox_repo.get(inbox_item_id)
+        if item is None:
+            return None
+        task_id = self.create_task(title=item["content"], inbox_item_id=inbox_item_id)
+        self.event_logger.log("inbox_triaged_to_task", {"inbox_item_id": inbox_item_id, "task_id": task_id})
+        return task_id
+
+    def triage_inbox_to_anki(self, inbox_item_id: int) -> int | None:
+        item = self.inbox_repo.get(inbox_item_id)
+        if item is None:
+            return None
+        draft_id = self.create_anki_draft(
+            source_type="inbox",
+            source_id=inbox_item_id,
+            front=item["content"],
+            back="",
+        )
+        self.inbox_repo.mark_triaged(inbox_item_id=inbox_item_id, triaged_at=now_utc_iso())
+        self.event_logger.log("inbox_triaged_to_anki", {"inbox_item_id": inbox_item_id, "draft_id": draft_id})
+        return draft_id
+
+    def archive_inbox(self, inbox_item_id: int) -> bool:
+        updated = self.inbox_repo.mark_archived(inbox_item_id)
+        if updated:
+            self.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
+        return bool(updated)
 
     def create_task(
         self,
@@ -125,3 +155,26 @@ class LifeSystemService:
 
     def list_anki_drafts(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return self.anki_repo.list(status=status, limit=limit)
+
+    def export_anki_drafts_csv(self, output_path: str) -> int:
+        rows = self.anki_repo.list_all()
+        path = Path(output_path)
+        if path.parent != Path("."):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        fieldnames = [
+            "id",
+            "source_type",
+            "source_id",
+            "deck_name",
+            "front",
+            "back",
+            "tags",
+            "status",
+            "created_at",
+        ]
+        with path.open("w", encoding="utf-8", newline="") as f:
+            writer = DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        self.event_logger.log("anki_drafts_exported_csv", {"path": str(path), "count": len(rows)})
+        return len(rows)

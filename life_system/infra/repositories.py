@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sqlite3
 from typing import Any
 
@@ -41,6 +43,19 @@ class InboxRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get(self, inbox_item_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, content, source, status, created_at, triaged_at
+            FROM inbox_items
+            WHERE id = ?
+            """,
+            (inbox_item_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
     def mark_triaged(self, inbox_item_id: int, triaged_at: str) -> int:
         cur = self.conn.execute(
             """
@@ -49,6 +64,18 @@ class InboxRepository:
             WHERE id = ?
             """,
             (triaged_at, inbox_item_id),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+    def mark_archived(self, inbox_item_id: int) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE inbox_items
+            SET status = 'archived'
+            WHERE id = ?
+            """,
+            (inbox_item_id,),
         )
         self.conn.commit()
         return cur.rowcount
@@ -241,4 +268,14 @@ class AnkiDraftRepository:
                 """,
                 (limit,),
             ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_all(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
+            FROM anki_drafts
+            ORDER BY id ASC
+            """
+        ).fetchall()
         return [dict(row) for row in rows]
