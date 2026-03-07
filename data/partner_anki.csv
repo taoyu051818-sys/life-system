@@ -1,0 +1,4 @@
+id,source_type,source_id,deck_name,front,back,tags,status,created_at
+5,inbox,8,inbox,买牛奶,,,draft,2026-03-07T11:55:50+00:00
+6,inbox,6,inbox,p note,,,draft,2026-03-07T11:55:54+00:00
+8,manual,,inbox,Qp,Ap,,draft,2026-03-07T11:57:03+00:00

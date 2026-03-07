@@ -1,0 +1,6 @@
+id,source_type,source_id,deck_name,front,back,tags,status,created_at
+1,task,1,adhd,什么是最小下一步?,定义可执行的下一动作,"adhd,action",draft,2026-03-07T09:06:12+00:00
+2,manual,,inbox,番茄钟多长,25分钟,,draft,2026-03-07T09:07:34+00:00
+3,task,1,inbox,什么是复盘?,回顾行为并提炼规则,,draft,2026-03-07T09:07:34+00:00
+4,manual,,english,on the verge of 是什么意思,濒临……；快要……,"phrase,listening",draft,2026-03-07T09:30:30+00:00
+7,manual,,inbox,Qx,Ax,,draft,2026-03-07T11:56:58+00:00

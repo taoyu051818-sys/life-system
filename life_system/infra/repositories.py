@@ -4,78 +4,97 @@ import sqlite3
 from typing import Any
 
 
+class UserRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def get_by_username(self, username: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, username, display_name, created_at
+            FROM users
+            WHERE username = ?
+            """,
+            (username,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+
 class InboxRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def create(self, content: str, source: str, created_at: str) -> int:
+    def create(self, user_id: int, content: str, source: str, created_at: str) -> int:
         cur = self.conn.execute(
             """
-            INSERT INTO inbox_items(content, source, status, created_at)
-            VALUES(?, ?, 'new', ?)
+            INSERT INTO inbox_items(user_id, content, source, status, created_at)
+            VALUES(?, ?, ?, 'new', ?)
             """,
-            (content, source, created_at),
+            (user_id, content, source, created_at),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list(self, status: str | None, limit: int) -> list[dict[str, Any]]:
+    def list(self, user_id: int, status: str | None, limit: int) -> list[dict[str, Any]]:
         if status:
             rows = self.conn.execute(
                 """
                 SELECT id, content, source, status, created_at
                 FROM inbox_items
-                WHERE status = ?
+                WHERE user_id = ? AND status = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (status, limit),
+                (user_id, status, limit),
             ).fetchall()
         else:
             rows = self.conn.execute(
                 """
                 SELECT id, content, source, status, created_at
                 FROM inbox_items
+                WHERE user_id = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (user_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def get(self, inbox_item_id: int) -> dict[str, Any] | None:
+    def get(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
             """
             SELECT id, content, source, status, created_at, triaged_at
             FROM inbox_items
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (inbox_item_id,),
+            (inbox_item_id, user_id),
         ).fetchone()
         if row is None:
             return None
         return dict(row)
 
-    def mark_triaged(self, inbox_item_id: int, triaged_at: str) -> int:
+    def mark_triaged(self, user_id: int, inbox_item_id: int, triaged_at: str) -> int:
         cur = self.conn.execute(
             """
             UPDATE inbox_items
             SET status = 'triaged', triaged_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (triaged_at, inbox_item_id),
+            (triaged_at, inbox_item_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount
 
-    def mark_archived(self, inbox_item_id: int) -> int:
+    def mark_archived(self, user_id: int, inbox_item_id: int) -> int:
         cur = self.conn.execute(
             """
             UPDATE inbox_items
             SET status = 'archived'
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (inbox_item_id,),
+            (inbox_item_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount
@@ -87,6 +106,7 @@ class TaskRepository:
 
     def create(
         self,
+        user_id: int,
         title: str,
         notes: str | None,
         priority: int,
@@ -97,74 +117,88 @@ class TaskRepository:
         cur = self.conn.execute(
             """
             INSERT INTO tasks(
-              title, notes, status, priority, due_at, inbox_item_id, created_at, updated_at
+              user_id, title, notes, status, priority, due_at, inbox_item_id, created_at, updated_at
             )
-            VALUES(?, ?, 'open', ?, ?, ?, ?, ?)
+            VALUES(?, ?, ?, 'open', ?, ?, ?, ?, ?)
             """,
-            (title, notes, priority, due_at, inbox_item_id, created_at, created_at),
+            (user_id, title, notes, priority, due_at, inbox_item_id, created_at, created_at),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list(self, status: str | None, limit: int) -> list[dict[str, Any]]:
+    def list(self, user_id: int, status: str | None, limit: int) -> list[dict[str, Any]]:
         if status:
             rows = self.conn.execute(
                 """
                 SELECT id, title, notes, status, priority, due_at, snooze_until, created_at, updated_at
                 FROM tasks
-                WHERE status = ?
+                WHERE user_id = ? AND status = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (status, limit),
+                (user_id, status, limit),
             ).fetchall()
         else:
             rows = self.conn.execute(
                 """
                 SELECT id, title, notes, status, priority, due_at, snooze_until, created_at, updated_at
                 FROM tasks
+                WHERE user_id = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (user_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def mark_done(self, task_id: int, now: str) -> int:
+    def mark_done(self, user_id: int, task_id: int, now: str) -> int:
         cur = self.conn.execute(
             """
             UPDATE tasks
             SET status = 'done', completed_at = ?, snooze_until = NULL, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (now, now, task_id),
+            (now, now, task_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount
 
-    def mark_abandoned(self, task_id: int, now: str) -> int:
+    def mark_abandoned(self, user_id: int, task_id: int, now: str) -> int:
         cur = self.conn.execute(
             """
             UPDATE tasks
             SET status = 'abandoned', abandoned_at = ?, snooze_until = NULL, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (now, now, task_id),
+            (now, now, task_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount
 
-    def mark_snoozed(self, task_id: int, snooze_until: str, now: str) -> int:
+    def mark_snoozed(self, user_id: int, task_id: int, snooze_until: str, now: str) -> int:
         cur = self.conn.execute(
             """
             UPDATE tasks
             SET status = 'snoozed', snooze_until = ?, updated_at = ?
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (snooze_until, now, task_id),
+            (snooze_until, now, task_id, user_id),
         )
         self.conn.commit()
         return cur.rowcount
+
+    def get(self, user_id: int, task_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, user_id, title, status
+            FROM tasks
+            WHERE id = ? AND user_id = ?
+            """,
+            (task_id, user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
 
 
 class ReminderRepository:
@@ -182,17 +216,17 @@ class ReminderRepository:
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def due(self, now: str, limit: int) -> list[dict[str, Any]]:
+    def due(self, user_id: int, now: str, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
             SELECT r.id, r.task_id, r.remind_at, r.channel, r.status, t.title AS task_title
             FROM reminders r
             JOIN tasks t ON t.id = r.task_id
-            WHERE r.status = 'pending' AND r.remind_at <= ?
+            WHERE r.status = 'pending' AND r.remind_at <= ? AND t.user_id = ?
             ORDER BY r.remind_at ASC, r.id ASC
             LIMIT ?
             """,
-            (now, limit),
+            (now, user_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
 
@@ -203,6 +237,7 @@ class AbandonmentLogRepository:
 
     def create(
         self,
+        user_id: int,
         task_id: int,
         reason_code: str | None,
         reason_text: str | None,
@@ -211,10 +246,10 @@ class AbandonmentLogRepository:
     ) -> int:
         cur = self.conn.execute(
             """
-            INSERT INTO abandonment_logs(task_id, reason_code, reason_text, energy_level, created_at)
-            VALUES(?, ?, ?, ?, ?)
+            INSERT INTO abandonment_logs(user_id, task_id, reason_code, reason_text, energy_level, created_at)
+            VALUES(?, ?, ?, ?, ?, ?)
             """,
-            (task_id, reason_code, reason_text, energy_level, created_at),
+            (user_id, task_id, reason_code, reason_text, energy_level, created_at),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -226,6 +261,7 @@ class AnkiDraftRepository:
 
     def create(
         self,
+        user_id: int,
         source_type: str,
         source_id: int | None,
         deck_name: str,
@@ -237,45 +273,48 @@ class AnkiDraftRepository:
         cur = self.conn.execute(
             """
             INSERT INTO anki_drafts(
-              source_type, source_id, deck_name, front, back, tags, status, created_at
+              user_id, source_type, source_id, deck_name, front, back, tags, status, created_at
             )
-            VALUES(?, ?, ?, ?, ?, ?, 'draft', ?)
+            VALUES(?, ?, ?, ?, ?, ?, ?, 'draft', ?)
             """,
-            (source_type, source_id, deck_name, front, back, tags, created_at),
+            (user_id, source_type, source_id, deck_name, front, back, tags, created_at),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list(self, status: str | None, limit: int) -> list[dict[str, Any]]:
+    def list(self, user_id: int, status: str | None, limit: int) -> list[dict[str, Any]]:
         if status:
             rows = self.conn.execute(
                 """
                 SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
                 FROM anki_drafts
-                WHERE status = ?
+                WHERE user_id = ? AND status = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (status, limit),
+                (user_id, status, limit),
             ).fetchall()
         else:
             rows = self.conn.execute(
                 """
                 SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
                 FROM anki_drafts
+                WHERE user_id = ?
                 ORDER BY id DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (user_id, limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_all(self) -> list[dict[str, Any]]:
+    def list_all(self, user_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
             SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
             FROM anki_drafts
+            WHERE user_id = ?
             ORDER BY id ASC
-            """
+            """,
+            (user_id,),
         ).fetchall()
         return [dict(row) for row in rows]

@@ -3,6 +3,7 @@ from typing import Sequence
 
 from life_system.app.services import LifeSystemService
 from life_system.infra.db import connection_ctx, ensure_database, resolve_db_path
+from life_system.infra.repositories import UserRepository
 
 
 VALID_TASK_STATUSES = {"open", "snoozed", "done", "abandoned"}
@@ -12,6 +13,7 @@ ABANDON_REASON_PRESETS = {"overwhelm", "wrong_timing", "no_value", "impulse", "b
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="life")
     parser.add_argument("--db", default=None, help="SQLite DB path (default: data/life_system.db)")
+    parser.add_argument("--user", default="xiaoyu", help="Username scope (default: xiaoyu)")
     subparsers = parser.add_subparsers(dest="entity", required=True)
 
     subparsers.add_parser("init-db")
@@ -93,7 +95,11 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
     ensure_database(db_path)
 
     with connection_ctx(db_path) as conn:
-        service = LifeSystemService(conn)
+        user = UserRepository(conn).get_by_username(args.user)
+        if user is None:
+            print(f"user not found: {args.user}")
+            return 1
+        service = LifeSystemService(conn, user_id=user["id"], username=user["username"])
         return _dispatch(service, args)
 
 
@@ -144,6 +150,9 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             due_at=args.due_at,
             inbox_item_id=args.inbox_id,
         )
+        if task_id is None:
+            print("inbox item not found")
+            return 1
         print(f"task created: id={task_id}")
         return 0
 
@@ -181,6 +190,9 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             remind_at=args.remind_at,
             channel=args.channel,
         )
+        if reminder_id is None:
+            print("task not found")
+            return 1
         print(f"reminder created: id={reminder_id}")
         return 0
 

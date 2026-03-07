@@ -57,9 +57,40 @@ def ensure_database(db_path: Path) -> None:
                 "INSERT INTO schema_migrations(name, applied_at) VALUES(?, ?)",
                 (migration.name, now_utc_iso()),
             )
+        _ensure_default_users_and_backfill(conn)
         conn.commit()
 
 
 def _get_applied_migrations(conn: sqlite3.Connection) -> Iterable[str]:
     rows = conn.execute("SELECT name FROM schema_migrations").fetchall()
     return [row["name"] for row in rows]
+
+
+def _ensure_default_users_and_backfill(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT NOT NULL UNIQUE,
+          display_name TEXT,
+          created_at TEXT NOT NULL
+        );
+        """
+    )
+
+    for username, display_name in (("xiaoyu", "Xiaoyu"), ("partner", "Partner")):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO users(username, display_name, created_at)
+            VALUES(?, ?, ?)
+            """,
+            (username, display_name, now_utc_iso()),
+        )
+
+    row = conn.execute("SELECT id FROM users WHERE username = 'xiaoyu'").fetchone()
+    if row is None:
+        return
+    xiaoyu_id = row["id"]
+
+    for table in ("inbox_items", "tasks", "abandonment_logs", "anki_drafts"):
+        conn.execute(f"UPDATE {table} SET user_id = ? WHERE user_id IS NULL", (xiaoyu_id,))
