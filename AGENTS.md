@@ -16,3 +16,8 @@
 - `show`: key/value block.
 - `history`: time-ordered readable event stream.
 - For repeated state-changing actions, prefer status-aware feedback such as `already ...`.
+
+## Deployment conventions
+- Keep deployment assets simple and systemd-based.
+- Prefer oneshot services + timers + shell wrappers.
+- Avoid Docker/cron/webhook-only flows unless explicitly requested.

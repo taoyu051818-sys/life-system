@@ -544,7 +544,8 @@ class TestCliFlows(unittest.TestCase):
             run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"])
             run_with_output(["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:10:00+00:00"])
 
-            _, out = run_with_output(["--db", db_path, "summary", "day", "--date", "2026-03-07"])
+            today_cst = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
+            _, out = run_with_output(["--db", db_path, "summary", "day", "--date", today_cst])
             self.assertIn("收件箱:", out)
             self.assertIn("任务:", out)
             self.assertIn("提醒:", out)

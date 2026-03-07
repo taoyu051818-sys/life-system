@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Life System reminders every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Persistent=true
+Unit=life-reminders.service
+
+[Install]
+WantedBy=timers.target
+

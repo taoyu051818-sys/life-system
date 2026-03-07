@@ -158,3 +158,89 @@ Notes:
 ## Retries
 
 - Retries are scheduled step-by-step when `reminder due --send` runs.
+
+## Linux Deployment (systemd timers)
+
+Target assumptions:
+- project root: `/opt/life-system`
+- virtualenv: `/opt/life-system/.venv`
+- database: `/opt/life-system/data/life_system.db`
+
+### 1. Install base packages
+
+```bash
+sudo apt-get update
+sudo apt-get install -y python3 python3-venv sqlite3 git
+```
+
+### 2. Clone project and create venv
+
+```bash
+sudo mkdir -p /opt
+cd /opt
+sudo git clone <your-repo-url> life-system
+cd /opt/life-system
+sudo python3 -m venv .venv
+sudo /opt/life-system/.venv/bin/python -m pip install --upgrade pip
+```
+
+### 3. Initialize database
+
+```bash
+cd /opt/life-system
+sudo /opt/life-system/.venv/bin/python -m life_system.main --db /opt/life-system/data/life_system.db init-db
+```
+
+### 4. Create environment file
+
+```bash
+sudo mkdir -p /etc/life-system
+sudo tee /etc/life-system/life-system.env >/dev/null <<'EOF'
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+EOF
+sudo chmod 600 /etc/life-system/life-system.env
+```
+
+### 5. Ensure wrapper scripts are executable
+
+```bash
+sudo chmod +x /opt/life-system/scripts/run_reminders.sh
+sudo chmod +x /opt/life-system/scripts/run_telegram_poll.sh
+sudo chmod +x /opt/life-system/scripts/run_summary_today.sh
+```
+
+### 6. Install systemd units
+
+```bash
+sudo cp /opt/life-system/deploy/systemd/life-reminders.service /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-reminders.timer /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-telegram-poll.service /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-telegram-poll.timer /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-summary.service /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-summary.timer /etc/systemd/system/
+```
+
+### 7. Reload and enable timers
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now life-reminders.timer
+sudo systemctl enable --now life-telegram-poll.timer
+sudo systemctl enable --now life-summary.timer
+```
+
+### 8. Verify timers and logs
+
+```bash
+sudo systemctl list-timers --all | grep life-
+sudo systemctl status life-reminders.timer
+sudo systemctl status life-telegram-poll.timer
+sudo systemctl status life-summary.timer
+
+sudo journalctl -u life-reminders.service -n 100 --no-pager
+sudo journalctl -u life-telegram-poll.service -n 100 --no-pager
+sudo journalctl -u life-summary.service -n 100 --no-pager
+```
+
+For systemd asset details, see:
+- `deploy/systemd/README.md`

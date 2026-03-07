@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Life System Telegram poll every minute (offset)
+
+[Timer]
+OnCalendar=*-*-* *:*:30
+AccuracySec=1s
+Persistent=true
+Unit=life-telegram-poll.service
+
+[Install]
+WantedBy=timers.target
+

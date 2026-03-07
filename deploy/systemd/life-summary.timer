@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Life System daily summary at 23:55 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 23:55:00
+Timezone=Asia/Shanghai
+Persistent=true
+Unit=life-summary.service
+
+[Install]
+WantedBy=timers.target
+

@@ -1,0 +1,11 @@
+[Unit]
+Description=Life System Telegram callback polling
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/life-system
+EnvironmentFile=/etc/life-system/life-system.env
+ExecStart=/opt/life-system/scripts/run_telegram_poll.sh
+
