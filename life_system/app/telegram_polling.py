@@ -9,6 +9,159 @@ from life_system.infra.db import now_utc_iso
 from life_system.infra.repositories import AppStateRepository, UserRepository
 
 _CHECKIN_LEVEL_PATTERN = re.compile(r"^(energy|focus|mood)=(\d+)$", re.IGNORECASE)
+_TODO_PREFIXES = ("待办", "待办：")
+_HELP_TEXT = (
+    "用法：\n"
+    "普通文本：记录为 activity\n"
+    "/r 今天学到了什么\n"
+    "/w 今天完成了什么\n"
+    "/c energy=4 focus=3 mood=5 今天状态不错"
+)
+_ACTION_VERBS = (
+    "发",
+    "回复",
+    "回",
+    "买",
+    "交",
+    "提交",
+    "改",
+    "联系",
+    "预约",
+    "安排",
+    "处理",
+    "准备",
+    "确认",
+    "付款",
+    "缴",
+    "订",
+    "做",
+    "做完",
+    "完成",
+    "整理",
+    "提醒",
+    "发送",
+)
+_DONE_PHRASES = (
+    "已经",
+    "刚刚",
+    "做完了",
+    "完成了",
+    "跑通了",
+    "搞定了",
+    "处理完了",
+    "交了",
+    "发了",
+    "买了",
+    "回了",
+    "提交了",
+    "联系了",
+    "预约好了",
+    "安排好了",
+)
+_HESITATION_PHRASES = (
+    "要不要",
+    "是不是",
+    "能不能",
+    "想不想",
+    "也许",
+    "可能",
+    "或许",
+    "考虑",
+    "想研究",
+    "想了解",
+    "想看看",
+    "先想想",
+    "不确定",
+)
+_STATE_WORDS = (
+    "累",
+    "困",
+    "烦",
+    "焦虑",
+    "开心",
+    "难过",
+    "状态",
+    "注意力",
+    "精力",
+    "心情",
+    "没状态",
+    "不想动",
+)
+_EXPLICIT_MEMORY_TRIGGERS = ("提醒我", "帮我记一下", "记一下", "先记着", "先记下", "加入收件箱")
+_MEMORY_REQUIRE_ACTION = ("记得", "别忘了")
+_TIME_WORDS = (
+    "今天",
+    "明天",
+    "今晚",
+    "下午",
+    "早上",
+    "上午",
+    "中午",
+    "晚上",
+    "周一",
+    "周二",
+    "周三",
+    "周四",
+    "周五",
+    "周六",
+    "周日",
+    "这周",
+    "下周",
+    "本周",
+    "月底前",
+    "之前",
+    "截止",
+    "点前",
+)
+
+
+def _contains_any(text: str, words: tuple[str, ...]) -> bool:
+    return any(w in text for w in words)
+
+
+def _contains_action_verb(text: str) -> bool:
+    return _contains_any(text, _ACTION_VERBS)
+
+
+def should_copy_activity_to_inbox(original_text: str) -> bool:
+    text = original_text.strip()
+    lower_text = text.lower()
+    if not text:
+        return False
+
+    has_action = _contains_action_verb(text)
+
+    # Step 1: exclusion rules
+    if _contains_any(text, _DONE_PHRASES):
+        return False
+    if _contains_any(text, _HESITATION_PHRASES):
+        return False
+    if (not has_action) and _contains_any(text, _STATE_WORDS):
+        return False
+
+    # Step 2.1: explicit remember/remind phrases
+    if _contains_any(text, _EXPLICIT_MEMORY_TRIGGERS):
+        return True
+    if _contains_any(text, _MEMORY_REQUIRE_ACTION) and has_action:
+        return True
+
+    # Step 2.2: todo prefixes
+    if any(text.startswith(prefix) for prefix in _TODO_PREFIXES):
+        return True
+    if lower_text.startswith("todo") or lower_text.startswith("todo:"):
+        return True
+
+    # Step 2.3: time word + action verb
+    if _contains_any(text, _TIME_WORDS) and has_action:
+        return True
+
+    # Step 2.4: short explicit action sentence
+    starts_with_action = any(text.startswith(verb) for verb in sorted(_ACTION_VERBS, key=len, reverse=True))
+    if len(text) <= 18 and has_action and (starts_with_action or text.startswith("给") or text.startswith("去")):
+        return True
+
+    # Step 3: default no inbox copy
+    return False
 
 
 def parse_callback_data(data: str) -> tuple[str, int] | None:
@@ -32,6 +185,8 @@ def parse_journal_message(text: str) -> dict[str, Any]:
         cmd = parts[0].split("@", 1)[0].lower()
         payload = parts[1].strip() if len(parts) > 1 else ""
 
+        if cmd == "/help":
+            return {"kind": "help", "reply": _HELP_TEXT}
         if cmd not in {"/r", "/w", "/c"}:
             return {"kind": "ignore"}
         if not payload:
@@ -108,12 +263,14 @@ class TelegramPollingService:
         self.user_repo = UserRepository(conn)
         self.state_repo = AppStateRepository(conn)
 
-    def poll(self, limit: int = 20) -> dict[str, int]:
+    def poll(self, limit: int = 20) -> dict[str, Any]:
         offset = self._get_offset()
         updates = self.telegram_sender.get_updates(offset=offset, limit=limit)
         processed = 0
         processed_callbacks = 0
         processed_messages = 0
+        inbox_created = 0
+        inbox_failed = 0
         ignored = 0
         ignored_reasons: dict[str, int] = {}
         max_update_id = None
@@ -143,10 +300,14 @@ class TelegramPollingService:
             msg = update.get("message")
             if isinstance(msg, dict):
                 try:
-                    handled, reason = self._process_message(msg)
+                    msg_result = self._process_message(msg)
+                    handled = bool(msg_result.get("handled"))
+                    reason = str(msg_result.get("reason", "unknown"))
                     if handled:
                         processed += 1
                         processed_messages += 1
+                        inbox_created += int(msg_result.get("inbox_created", 0))
+                        inbox_failed += int(msg_result.get("inbox_failed", 0))
                     else:
                         ignored += 1
                         ignored_reasons[reason] = ignored_reasons.get(reason, 0) + 1
@@ -165,6 +326,8 @@ class TelegramPollingService:
             "processed": processed,
             "processed_callbacks": processed_callbacks,
             "processed_messages": processed_messages,
+            "inbox_created": inbox_created,
+            "inbox_failed": inbox_failed,
             "ignored": ignored,
             "fetched": len(updates),
             "ignored_reasons": ignored_reasons,
@@ -217,34 +380,37 @@ class TelegramPollingService:
         if callback_id:
             self._safe_answer(callback_id, text)
 
-    def _process_message(self, msg: dict[str, Any]) -> tuple[bool, str]:
+    def _process_message(self, msg: dict[str, Any]) -> dict[str, Any]:
         chat = msg.get("chat")
         if not isinstance(chat, dict):
-            return False, "missing_chat"
+            return {"handled": False, "reason": "missing_chat"}
 
         if chat.get("type") != "private":
-            return False, "non_private_chat"
+            return {"handled": False, "reason": "non_private_chat"}
 
         text = msg.get("text")
         if not isinstance(text, str):
-            return False, "non_text_message"
+            return {"handled": False, "reason": "non_text_message"}
 
         if "id" not in chat:
-            return False, "missing_chat_id"
+            return {"handled": False, "reason": "missing_chat_id"}
         chat_id = str(chat["id"])
 
         user = self.user_repo.get_by_telegram_chat_id(chat_id)
         if user is None:
-            return False, "unknown_chat"
+            return {"handled": False, "reason": "unknown_chat"}
 
         parsed = parse_journal_message(text)
         kind = parsed.get("kind")
+        if kind == "help":
+            self._safe_send_message(chat_id, str(parsed.get("reply") or _HELP_TEXT))
+            return {"handled": True, "reason": "help"}
         if kind == "ignore":
-            return False, "unsupported_command"
+            return {"handled": False, "reason": "unsupported_command"}
 
         if kind in {"empty", "error"}:
             self._safe_send_message(chat_id, str(parsed.get("error") or "未识别到可记录内容"))
-            return False, "empty_payload" if kind == "empty" else "invalid_payload"
+            return {"handled": False, "reason": "empty_payload" if kind == "empty" else "invalid_payload"}
 
         service = LifeSystemService(
             self.conn,
@@ -260,8 +426,18 @@ class TelegramPollingService:
             focus_level=parsed.get("focus_level"),
             mood_level=parsed.get("mood_level"),
         )
-        self._safe_send_message(chat_id, str(parsed.get("ok_text") or "已记录"))
-        return True, "ok"
+        inbox_created = 0
+        inbox_failed = 0
+        ok_text = str(parsed.get("ok_text") or "已记录")
+        if str(parsed.get("entry_type")) == "activity" and should_copy_activity_to_inbox(str(parsed["content"])):
+            try:
+                service.capture_inbox(content=str(parsed["content"]), source="telegram_auto")
+                inbox_created = 1
+                ok_text = "已记录，并已加入收件箱"
+            except Exception:
+                inbox_failed = 1
+        self._safe_send_message(chat_id, ok_text)
+        return {"handled": True, "reason": "ok", "inbox_created": inbox_created, "inbox_failed": inbox_failed}
 
     def _extract_chat_id(self, cq: dict[str, Any]) -> str | None:
         msg = cq.get("message")

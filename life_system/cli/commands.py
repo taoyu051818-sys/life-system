@@ -146,6 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     telegram_sub = telegram.add_subparsers(dest="action", required=True)
     telegram_poll = telegram_sub.add_parser("poll", help="Poll Telegram updates (callbacks + private messages)")
     telegram_poll.add_argument("--limit", type=int, default=20)
+    telegram_sub.add_parser("setup-menu", help="Setup Telegram command menu")
 
     return parser
 
@@ -169,8 +170,19 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         if args.entity == "telegram":
             sender = _build_telegram_sender_from_env()
             if sender is None:
-                print("TELEGRAM_BOT_TOKEN 未设置，无法执行 telegram poll")
+                print("TELEGRAM_BOT_TOKEN 未设置，无法执行 telegram 命令")
                 return 1
+            if args.action == "setup-menu":
+                try:
+                    result = sender.setup_menu()
+                except RuntimeError as exc:
+                    print(f"telegram setup-menu failed: {exc}")
+                    return 1
+                if result.get("menu_button", True):
+                    print("telegram 菜单已设置：/r /w /c /help")
+                else:
+                    print("telegram 命令菜单已设置；菜单按钮未设置成功")
+                return 0
             poller = TelegramPollingService(conn, sender)
             try:
                 result = poller.poll(limit=args.limit)
@@ -181,7 +193,9 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                 "telegram poll done: "
                 f"fetched={result['fetched']}, processed={result['processed']}, "
                 f"callbacks={result.get('processed_callbacks', 0)}, "
-                f"messages={result.get('processed_messages', 0)}, ignored={result['ignored']}"
+                f"messages={result.get('processed_messages', 0)}, "
+                f"inbox_created={result.get('inbox_created', 0)}, "
+                f"inbox_failed={result.get('inbox_failed', 0)}, ignored={result['ignored']}"
             )
             reasons = result.get("ignored_reasons", {})
             if isinstance(reasons, dict) and reasons:

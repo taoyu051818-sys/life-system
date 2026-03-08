@@ -49,6 +49,22 @@ class TelegramReminderSender:
     def answer_callback_query(self, callback_query_id: str, text: str) -> None:
         self._post("answerCallbackQuery", {"callback_query_id": callback_query_id, "text": text})
 
+    def setup_menu(self) -> dict[str, bool]:
+        commands = [
+            {"command": "r", "description": "反思"},
+            {"command": "w", "description": "小胜利"},
+            {"command": "c", "description": "状态签到"},
+            {"command": "help", "description": "帮助"},
+        ]
+        self._post("setMyCommands", {"commands": json.dumps(commands, ensure_ascii=False)})
+
+        menu_button_ok = True
+        try:
+            self._post("setChatMenuButton", {"menu_button": json.dumps({"type": "commands"})})
+        except RuntimeError:
+            menu_button_ok = False
+        return {"commands": True, "menu_button": menu_button_ok}
+
     def _post(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{self._base}/{method}"
         data = urllib.parse.urlencode(params).encode("utf-8")

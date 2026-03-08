@@ -1,4 +1,4 @@
-# life-system
+﻿# life-system
 
 Low-resource, CLI-first personal life system (Python + SQLite).
 
@@ -113,7 +113,7 @@ python -m life_system.main user clear-telegram xiaoyu
 ## Summary Output
 
 - `summary today` / `summary day` output is Chinese by default.
-- Summary day boundaries are hardcoded to Asia/Shanghai (北京时间).
+- Summary day boundaries are hardcoded to Asia/Shanghai (鍖椾含鏃堕棿).
 - Summary timestamps in highlights are displayed in Beijing time.
 - Summary is evidence-first and user-scoped.
 - Includes overview counts, journal highlights, state snapshot, open loops, and a short conservative note.
@@ -133,9 +133,11 @@ python -m life_system.main user clear-telegram xiaoyu
    - `export TELEGRAM_BOT_TOKEN=...` (Linux/macOS)
 3. Set chat id for a user:
    - `python -m life_system.main user set-telegram xiaoyu <chat_id>`
-4. Send due reminders:
+4. Setup Telegram command menu:
+   - `python -m life_system.main telegram setup-menu`
+5. Send due reminders:
    - `python -m life_system.main --user xiaoyu reminder due --send`
-5. Poll callback updates (this pass uses polling, not webhook):
+6. Poll updates (this pass uses polling, not webhook):
    - `python -m life_system.main telegram poll --limit 20`
 
 Notes:
@@ -146,6 +148,43 @@ Notes:
   - 延后10分钟
   - 跳过今天
 - Callback actions are processed via `telegram poll` and then mapped to existing reminder ack/snooze/skip logic.
+
+## Telegram Journal Capture (Polling)
+
+- Still based on `telegram poll` + `getUpdates` (no webhook in this pass).
+- Only private chat text messages are handled.
+- User mapping is based on `users.telegram_chat_id`.
+- Unknown chat id / non-text / group messages are ignored safely.
+
+Message rules:
+- Plain text: default to `activity`
+- `/r <text>`: `reflection`
+- `/w <text>`: `win`
+- `/c <text>`: `checkin`
+- `/help`: show concise usage help in Chinese
+- `/c` supports optional leading state fields:
+  - `energy=1..5`
+  - `focus=1..5`
+  - `mood=1..5`
+  - Example: `/c energy=2 focus=2 mood=3 今天状态一般`
+
+Examples:
+- `今天完成了背单词`
+- `/r 今天启动很难，但开始后还行`
+- `/w 今天至少没有脱离系统`
+- `/c energy=2 focus=2 mood=3 今天状态一般`
+
+### Activity to Inbox split rules
+
+- Telegram message always writes journal first.
+- `reflection` / `win` / `checkin`: journal only, no auto inbox copy.
+- `activity`: journal first, then strict inbox copy decision.
+- Inbox copy uses source `telegram_auto`.
+- If inbox copy fails, journal entry is kept (no rollback).
+
+Polling output includes:
+- `inbox_created`
+- `inbox_failed`
 
 ## Abandonment Reason Presets
 
@@ -244,3 +283,4 @@ sudo journalctl -u life-summary.service -n 100 --no-pager
 
 For systemd asset details, see:
 - `deploy/systemd/README.md`
+
