@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
-from life_system.app.services import LifeSystemService
+from life_system.app.services import InboxReviewService, LifeSystemService
 from life_system.app.telegram_polling import TelegramPollingService
 from life_system.infra.db import connection_ctx, ensure_database, now_utc_iso, resolve_db_path
 from life_system.infra.repositories import UserRepository
@@ -55,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     inbox_triage = inbox_sub.add_parser("triage", help="Route inbox item to task/anki/archive")
     inbox_triage.add_argument("inbox_id", type=int)
     inbox_triage.add_argument("target", choices=["task", "anki", "archive"])
+    inbox_review_due = inbox_sub.add_parser("review-due", help="Check inbox review reminder candidates")
+    inbox_review_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    inbox_review_send = inbox_sub.add_parser("review-send", help="Send inbox review reminders")
+    inbox_review_send.add_argument("--now", default=None, help="ISO timestamp, default utc now")
 
     task = subparsers.add_parser("task")
     task_sub = task.add_subparsers(dest="action", required=True)
@@ -167,6 +171,24 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
         user_repo = UserRepository(conn)
         if args.entity == "user":
             return _dispatch_user(user_repo, args)
+        if args.entity == "inbox" and args.action in {"review-due", "review-send"}:
+            sender = _build_telegram_sender_from_env()
+            review_service = InboxReviewService(conn, telegram_sender=sender)
+            if args.action == "review-due":
+                stats = review_service.review_due(now=args.now)
+            else:
+                stats = review_service.review_send(now=args.now)
+            print(
+                "inbox review: "
+                f"checked_users={stats['checked_users']}, "
+                f"sent={stats['sent']}, "
+                f"skipped_empty={stats['skipped_empty']}, "
+                f"skipped_already_sent={stats['skipped_already_sent']}, "
+                f"escalated={stats['escalated']}, "
+                f"fallback_cli={stats['fallback_cli']}, "
+                f"failed={stats['failed']}"
+            )
+            return 0
         if args.entity == "telegram":
             sender = _build_telegram_sender_from_env()
             if sender is None:

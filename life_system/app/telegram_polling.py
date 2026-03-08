@@ -123,45 +123,45 @@ def _contains_action_verb(text: str) -> bool:
     return _contains_any(text, _ACTION_VERBS)
 
 
-def should_copy_activity_to_inbox(original_text: str) -> bool:
+def decide_activity_inbox_rule(original_text: str) -> str | None:
     text = original_text.strip()
     lower_text = text.lower()
     if not text:
-        return False
+        return None
 
     has_action = _contains_action_verb(text)
 
     # Step 1: exclusion rules
     if _contains_any(text, _DONE_PHRASES):
-        return False
+        return None
     if _contains_any(text, _HESITATION_PHRASES):
-        return False
+        return None
     if (not has_action) and _contains_any(text, _STATE_WORDS):
-        return False
+        return None
 
     # Step 2.1: explicit remember/remind phrases
     if _contains_any(text, _EXPLICIT_MEMORY_TRIGGERS):
-        return True
+        return "explicit_remember"
     if _contains_any(text, _MEMORY_REQUIRE_ACTION) and has_action:
-        return True
+        return "explicit_remember"
 
     # Step 2.2: todo prefixes
     if any(text.startswith(prefix) for prefix in _TODO_PREFIXES):
-        return True
+        return "todo_prefix"
     if lower_text.startswith("todo") or lower_text.startswith("todo:"):
-        return True
+        return "todo_prefix"
 
     # Step 2.3: time word + action verb
     if _contains_any(text, _TIME_WORDS) and has_action:
-        return True
+        return "time_plus_action"
 
     # Step 2.4: short explicit action sentence
     starts_with_action = any(text.startswith(verb) for verb in sorted(_ACTION_VERBS, key=len, reverse=True))
     if len(text) <= 18 and has_action and (starts_with_action or text.startswith("给") or text.startswith("去")):
-        return True
+        return "short_action_phrase"
 
     # Step 3: default no inbox copy
-    return False
+    return None
 
 
 def parse_callback_data(data: str) -> tuple[str, int] | None:
@@ -419,7 +419,7 @@ class TelegramPollingService:
             telegram_chat_id=user.get("telegram_chat_id"),
             reminder_sender=self.telegram_sender,
         )
-        service.add_journal_entry(
+        journal_entry_id = service.add_journal_entry(
             content=str(parsed["content"]),
             entry_type=str(parsed["entry_type"]),
             energy_level=parsed.get("energy_level"),
@@ -429,9 +429,20 @@ class TelegramPollingService:
         inbox_created = 0
         inbox_failed = 0
         ok_text = str(parsed.get("ok_text") or "已记录")
-        if str(parsed.get("entry_type")) == "activity" and should_copy_activity_to_inbox(str(parsed["content"])):
+        if str(parsed.get("entry_type")) == "activity":
+            rule_name = decide_activity_inbox_rule(str(parsed["content"]))
+        else:
+            rule_name = None
+        if rule_name:
             try:
-                service.capture_inbox(content=str(parsed["content"]), source="telegram_auto")
+                service.capture_inbox(
+                    content=str(parsed["content"]),
+                    source="telegram_auto",
+                    source_journal_entry_id=journal_entry_id,
+                    created_by="telegram_auto",
+                    rule_name=rule_name,
+                    rule_version="inbox_v1",
+                )
                 inbox_created = 1
                 ok_text = "已记录，并已加入收件箱"
             except Exception:

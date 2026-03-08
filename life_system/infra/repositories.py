@@ -99,13 +99,35 @@ class InboxRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
-    def create(self, user_id: int, content: str, source: str, created_at: str) -> int:
+    def create(
+        self,
+        user_id: int,
+        content: str,
+        source: str,
+        created_at: str,
+        source_journal_entry_id: int | None = None,
+        created_by: str | None = None,
+        rule_name: str | None = None,
+        rule_version: str | None = None,
+    ) -> int:
         cur = self.conn.execute(
             """
-            INSERT INTO inbox_items(user_id, content, source, status, created_at)
-            VALUES(?, ?, ?, 'new', ?)
+            INSERT INTO inbox_items(
+              user_id, content, source, status, created_at,
+              source_journal_entry_id, created_by, rule_name, rule_version
+            )
+            VALUES(?, ?, ?, 'new', ?, ?, ?, ?, ?)
             """,
-            (user_id, content, source, created_at),
+            (
+                user_id,
+                content,
+                source,
+                created_at,
+                source_journal_entry_id,
+                created_by,
+                rule_name,
+                rule_version,
+            ),
         )
         self.conn.commit()
         return int(cur.lastrowid)
@@ -150,7 +172,9 @@ class InboxRepository:
     def get(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
             """
-            SELECT id, content, source, status, created_at, triaged_at
+            SELECT
+              id, content, source, status, created_at, triaged_at,
+              source_journal_entry_id, created_by, rule_name, rule_version
             FROM inbox_items
             WHERE id = ? AND user_id = ?
             """,
@@ -225,6 +249,28 @@ class InboxRepository:
             (user_id, start_iso, end_iso),
         ).fetchone()
         return int(row["c"])
+
+    def count_unprocessed(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND status = 'new'",
+            (user_id,),
+        ).fetchone()
+        return int(row["c"])
+
+    def oldest_unprocessed_created_at(self, user_id: int) -> str | None:
+        row = self.conn.execute(
+            """
+            SELECT created_at
+            FROM inbox_items
+            WHERE user_id = ? AND status = 'new'
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return str(row["created_at"])
 
 
 class TaskRepository:

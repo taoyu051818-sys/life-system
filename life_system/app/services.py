@@ -10,11 +10,13 @@ from life_system.infra.db import now_utc_iso
 from life_system.infra.repositories import (
     AbandonmentLogRepository,
     AnkiDraftRepository,
+    AppStateRepository,
     InboxRepository,
     JournalRepository,
     ReminderEventRepository,
     ReminderRepository,
     TaskRepository,
+    UserRepository,
 )
 
 RETRY_MINUTES = [10, 30, 120]
@@ -44,12 +46,24 @@ class LifeSystemService:
         self.journal_repo = JournalRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
 
-    def capture_inbox(self, content: str, source: str = "cli") -> int:
+    def capture_inbox(
+        self,
+        content: str,
+        source: str = "cli",
+        source_journal_entry_id: int | None = None,
+        created_by: str | None = "manual",
+        rule_name: str | None = None,
+        rule_version: str | None = None,
+    ) -> int:
         item_id = self.inbox_repo.create(
             user_id=self.user_id,
             content=content,
             source=source,
             created_at=now_utc_iso(),
+            source_journal_entry_id=source_journal_entry_id,
+            created_by=created_by,
+            rule_name=rule_name,
+            rule_version=rule_version,
         )
         self.event_logger.log("inbox_captured", {"inbox_item_id": item_id, "username": self.username})
         return item_id
@@ -545,3 +559,110 @@ class LifeSystemService:
         if pending_ack > 0:
             return "今天虽然正式完成项不多，但有真实记录和闭环动作。"
         return "今天证据还不多，先补一条简短记录会更稳。"
+
+
+class InboxReviewService:
+    REVIEW_WINDOW_HOUR = 20
+    REVIEW_WINDOW_MINUTE = 30
+
+    def __init__(self, conn: sqlite3.Connection, telegram_sender: Any | None = None):
+        self.conn = conn
+        self.telegram_sender = telegram_sender
+        self.user_repo = UserRepository(conn)
+        self.inbox_repo = InboxRepository(conn)
+        self.state_repo = AppStateRepository(conn)
+
+    def review_due(self, now: str | None = None) -> dict[str, Any]:
+        return self._run(now=now, send=False)
+
+    def review_send(self, now: str | None = None) -> dict[str, Any]:
+        return self._run(now=now, send=True)
+
+    def _run(self, now: str | None, send: bool) -> dict[str, Any]:
+        now_dt = datetime.fromisoformat((now or now_utc_iso()).replace("Z", "+00:00"))
+        now_cst = now_dt.astimezone(CST)
+        day_cst = now_cst.date().isoformat()
+        window_reached = (now_cst.hour, now_cst.minute) >= (self.REVIEW_WINDOW_HOUR, self.REVIEW_WINDOW_MINUTE)
+
+        stats: dict[str, Any] = {
+            "checked_users": 0,
+            "sent": 0,
+            "skipped_empty": 0,
+            "skipped_already_sent": 0,
+            "escalated": 0,
+            "fallback_cli": 0,
+            "failed": 0,
+            "skipped_before_window": 0,
+        }
+
+        users = self.user_repo.list_all()
+        if not window_reached:
+            stats["skipped_before_window"] = len(users)
+            return stats
+
+        for user in users:
+            stats["checked_users"] += 1
+            user_id = int(user["id"])
+            sent_key = f"inbox_review_sent:{user_id}:{day_cst}"
+            if self.state_repo.get(sent_key):
+                stats["skipped_already_sent"] += 1
+                continue
+
+            pending = self.inbox_repo.count_unprocessed(user_id=user_id)
+            if pending <= 0:
+                stats["skipped_empty"] += 1
+                continue
+
+            oldest_created_at = self.inbox_repo.oldest_unprocessed_created_at(user_id=user_id)
+            oldest_hours = self._oldest_age_hours(now_dt, oldest_created_at)
+            escalated = pending >= 7 or oldest_hours >= 72
+            if escalated:
+                stats["escalated"] += 1
+
+            if not send:
+                continue
+
+            msg = self._build_message(
+                username=str(user["username"]),
+                pending=pending,
+                oldest_hours=oldest_hours,
+                escalated=escalated,
+            )
+            chat_id = user.get("telegram_chat_id")
+            delivered = False
+            if chat_id:
+                if self.telegram_sender is None:
+                    stats["failed"] += 1
+                else:
+                    try:
+                        self.telegram_sender.send_message(str(chat_id), msg)
+                        delivered = True
+                    except Exception:
+                        stats["failed"] += 1
+            else:
+                print(f"[{user['username']}] {msg}")
+                stats["fallback_cli"] += 1
+                delivered = True
+
+            if delivered:
+                stats["sent"] += 1
+                self.state_repo.set(sent_key, now_utc_iso(), now_utc_iso())
+
+        return stats
+
+    def _oldest_age_hours(self, now_dt: datetime, created_at: str | None) -> int:
+        if not created_at:
+            return 0
+        try:
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+        delta = now_dt - dt
+        if delta.total_seconds() < 0:
+            return 0
+        return int(delta.total_seconds() // 3600)
+
+    def _build_message(self, username: str, pending: int, oldest_hours: int, escalated: bool) -> str:
+        if escalated:
+            return f"【收件箱强提醒】{username}，未处理 {pending} 条，最老约 {oldest_hours} 小时，请尽快 triage。"
+        return f"【收件箱提醒】{username}，还有 {pending} 条未处理，抽 2 分钟做一下 triage。"

@@ -186,6 +186,20 @@ Polling output includes:
 - `inbox_created`
 - `inbox_failed`
 
+## Inbox Review Reminder
+
+- Commands:
+  - `python -m life_system.main inbox review-due`
+  - `python -m life_system.main inbox review-send`
+- Uses Asia/Shanghai day and 20:30 window.
+- Sends at most once per user per day when unprocessed inbox items exist.
+- Escalates when:
+  - unprocessed inbox >= 7
+  - oldest unprocessed item >= 72 hours
+- Delivery:
+  - with `telegram_chat_id`: Telegram text message
+  - without `telegram_chat_id`: CLI fallback
+
 ## Abandonment Reason Presets
 
 - overwhelm
