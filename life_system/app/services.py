@@ -87,7 +87,7 @@ class LifeSystemService:
             include_archived=include_archived,
         )
 
-    def triage_inbox_to_task(self, inbox_item_id: int) -> int | None:
+    def triage_inbox_to_task(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return None
@@ -101,14 +101,14 @@ class LifeSystemService:
             action="to_task",
             target_type="task",
             target_id=task_id,
-            created_by="manual",
+            created_by=created_by,
             source_rule_name=item.get("rule_name"),
             source_rule_version=item.get("rule_version"),
         )
         self.event_logger.log("inbox_triaged_to_task", {"inbox_item_id": inbox_item_id, "task_id": task_id})
         return task_id
 
-    def triage_inbox_to_anki(self, inbox_item_id: int) -> int | None:
+    def triage_inbox_to_anki(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return None
@@ -126,14 +126,14 @@ class LifeSystemService:
             action="to_anki",
             target_type="anki",
             target_id=draft_id,
-            created_by="manual",
+            created_by=created_by,
             source_rule_name=item.get("rule_name"),
             source_rule_version=item.get("rule_version"),
         )
         self.event_logger.log("inbox_triaged_to_anki", {"inbox_item_id": inbox_item_id, "draft_id": draft_id})
         return draft_id
 
-    def archive_inbox(self, inbox_item_id: int) -> str:
+    def archive_inbox(self, inbox_item_id: int, created_by: str = "manual") -> str:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return "not_found"
@@ -149,12 +149,15 @@ class LifeSystemService:
             action="to_archive",
             target_type="archive",
             target_id=None,
-            created_by="manual",
+            created_by=created_by,
             source_rule_name=item.get("rule_name"),
             source_rule_version=item.get("rule_version"),
         )
         self.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
         return "archived"
+
+    def list_new_inbox_oldest(self, limit: int = 5) -> list[dict[str, Any]]:
+        return self.inbox_repo.list_new_oldest(user_id=self.user_id, limit=limit)
 
     def inbox_history(self, inbox_item_id: int) -> list[dict[str, Any]] | None:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)

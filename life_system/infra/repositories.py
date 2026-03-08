@@ -287,6 +287,21 @@ class InboxRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_new_oldest(self, user_id: int, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, content, source, status, created_at, triaged_at,
+              source_journal_entry_id, created_by, rule_name, rule_version
+            FROM inbox_items
+            WHERE user_id = ? AND status = 'new'
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
 
 class TaskRepository:
     def __init__(self, conn: sqlite3.Connection):

@@ -186,6 +186,20 @@ Polling output includes:
 - `inbox_created`
 - `inbox_failed`
 
+## Telegram Inbox Light Triage
+
+- Command:
+  - `python -m life_system.main --user xiaoyu telegram inbox-review --limit 5`
+- Behavior:
+  - Sends each `status='new'` inbox item as a separate Telegram message.
+  - Inline buttons per item:
+    - `转任务` (`it:<inbox_id>`)
+    - `归档` (`ia:<inbox_id>`)
+    - `先留着` (`ik:<inbox_id>`)
+- Scope:
+  - Telegram only handles light triage (task/archive/keep).
+  - No time setting / reminder setup in Telegram for this pass.
+
 ## Inbox Review Reminder
 
 - Commands:

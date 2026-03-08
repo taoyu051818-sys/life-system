@@ -74,6 +74,39 @@ class TelegramReminderSender:
     def answer_callback_query(self, callback_query_id: str, text: str) -> None:
         self._post("answerCallbackQuery", {"callback_query_id": callback_query_id, "text": text})
 
+    def send_inbox_review_item(self, chat_id: str, inbox_id: int, content: str) -> str:
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "转任务", "callback_data": f"it:{inbox_id}"},
+                    {"text": "归档", "callback_data": f"ia:{inbox_id}"},
+                    {"text": "先留着", "callback_data": f"ik:{inbox_id}"},
+                ]
+            ]
+        }
+        text = f"【收件箱】\n#{inbox_id}\n{content}"
+        payload = self._post(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "disable_web_page_preview": "true",
+                "reply_markup": json.dumps(keyboard, ensure_ascii=False),
+            },
+        )
+        result = payload.get("result", {})
+        return str(result.get("message_id", ""))
+
+    def clear_message_inline_keyboard(self, chat_id: str, message_id: int) -> None:
+        self._post(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": json.dumps({}, ensure_ascii=True),
+            },
+        )
+
     def setup_menu(self) -> dict[str, bool]:
         commands = [
             {"command": "r", "description": "反思"},

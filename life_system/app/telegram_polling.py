@@ -175,7 +175,7 @@ def parse_callback_data(data: str) -> tuple[str, int] | None:
     if not data or ":" not in data:
         return None
     action, rid = data.split(":", 1)
-    if action not in {"ra", "rz", "rk"}:
+    if action not in {"ra", "rz", "rk", "it", "ia", "ik"}:
         return None
     if not rid.isdigit():
         return None
@@ -382,14 +382,17 @@ class TelegramPollingService:
             remind_at = dt.replace(microsecond=0).isoformat()
             status = service.snooze_reminder(reminder_id, remind_at)
             text = "已延后10分钟" if status == "snoozed" else "已经处理过了"
-        else:
+        elif action == "rk":
             status = service.skip_reminder(reminder_id, reason="telegram_skip")
             text = "已跳过今天" if status == "skipped" else "已经处理过了"
+        else:
+            text = self._process_inbox_callback(action=action, inbox_id=reminder_id, service=service)
 
-        if status == "not_found":
+        if action in {"ra", "rz", "rk"} and status == "not_found":
             text = "提醒不存在或无权限"
         if callback_id:
             self._safe_answer(callback_id, text)
+        self._safe_clear_inline_keyboard(cq)
 
     def _process_message(self, msg: dict[str, Any]) -> dict[str, Any]:
         chat = msg.get("chat")
@@ -499,3 +502,37 @@ class TelegramPollingService:
         except Exception:
             # Journal capture should not rollback when reply fails.
             pass
+
+    def _safe_clear_inline_keyboard(self, cq: dict[str, Any]) -> None:
+        try:
+            msg = cq.get("message")
+            if not isinstance(msg, dict):
+                return
+            chat = msg.get("chat")
+            if not isinstance(chat, dict):
+                return
+            chat_id = chat.get("id")
+            message_id = msg.get("message_id")
+            if chat_id is None or message_id is None:
+                return
+            if hasattr(self.telegram_sender, "clear_message_inline_keyboard"):
+                self.telegram_sender.clear_message_inline_keyboard(str(chat_id), int(message_id))
+        except Exception:
+            # Do not block action when message edit fails.
+            pass
+
+    def _process_inbox_callback(self, action: str, inbox_id: int, service: LifeSystemService) -> str:
+        triage_status = service.inbox_triage_status(inbox_id)
+        if action == "ik":
+            return "先留在收件箱"
+        if triage_status in {"already_triaged", "already_archived"}:
+            return "已处理过了"
+        if triage_status == "not_found":
+            return "收件箱不存在或无权限"
+        if action == "it":
+            task_id = service.triage_inbox_to_task(inbox_id, created_by="telegram_auto_followup")
+            return "已转为任务" if task_id is not None else "已处理过了"
+        if action == "ia":
+            status = service.archive_inbox(inbox_id, created_by="telegram_auto_followup")
+            return "已归档" if status == "archived" else "已处理过了"
+        return "无法识别操作"
