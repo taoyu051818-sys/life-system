@@ -1,0 +1,35 @@
+﻿<div id="tasks-panel">
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>content</th><th>status</th><th>created_at(北京)</th><th>due_at</th><th>snooze_until</th><th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in tasks %}
+        <tr>
+          <td>{{ t.id }}</td>
+          <td class="content">{{ t.title }}</td>
+          <td>{{ t.status }}</td>
+          <td>{{ t.created_at | bj_time }}</td>
+          <td>{{ t.due_at | bj_time }}</td>
+          <td>{{ t.snooze_until | bj_time }}</td>
+          <td>
+            <button class="btn small ghost" hx-get="/tasks/{{ t.id }}" hx-target="#task-detail-{{ t.id }}" hx-swap="innerHTML">详情</button>
+            <button class="btn small" hx-post="/tasks/{{ t.id }}/done" hx-target="#tasks-panel" hx-swap="outerHTML">完成</button>
+            <form class="inline-form" hx-post="/tasks/{{ t.id }}/snooze" hx-target="#tasks-panel" hx-swap="outerHTML">
+              <input name="snooze_until" placeholder="2026-03-08T09:00:00+08:00" />
+              <button class="btn small secondary" type="submit">snooze</button>
+            </form>
+          </td>
+        </tr>
+        <tr><td colspan="7"><div id="task-detail-{{ t.id }}" class="history-slot"></div></td></tr>
+        {% else %}
+        <tr><td colspan="7" class="muted">no tasks</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

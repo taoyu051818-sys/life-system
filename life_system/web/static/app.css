@@ -1,0 +1,58 @@
+﻿:root {
+  --bg: #f5f7fa;
+  --card: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --line: #d1d5db;
+  --brand: #0f766e;
+}
+body {
+  margin: 0;
+  font-family: "Noto Sans SC", "PingFang SC", sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+.topbar {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.brand { font-weight: 700; }
+.nav a { margin-right: 12px; color: var(--brand); text-decoration: none; }
+.user-chip { margin-left: auto; color: var(--muted); }
+.page { max-width: 1100px; margin: 22px auto; padding: 0 16px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+.muted { color: var(--muted); }
+.flash { background: #ecfeff; border: 1px solid #99f6e4; padding: 8px 10px; border-radius: 8px; margin-bottom: 10px; }
+.table-wrap { overflow: auto; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; vertical-align: top; }
+.content { min-width: 320px; }
+.btn {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  border-radius: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.btn.small { font-size: 12px; margin-right: 6px; }
+.btn.secondary { background: #1d4ed8; border-color: #1d4ed8; }
+.btn.ghost { background: #fff; color: #111827; border-color: var(--line); }
+.history-slot { padding: 6px 0; }
+.history { background: #f9fafb; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; }
+.history-item { display: flex; gap: 10px; font-size: 12px; color: #374151; margin-bottom: 4px; }
+
+.login-card { max-width: 420px; }
+.stack-form { display: grid; gap: 8px; margin-bottom: 12px; }
+.stack-form input { padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; }
+.inline-check { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.error { color: #b91c1c; }
+.quick-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.focus-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.inline-form { display: inline-flex; gap: 6px; align-items: center; }
+.inline-form input { width: 220px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; }

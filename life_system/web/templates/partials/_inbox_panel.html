@@ -1,0 +1,45 @@
+﻿<div id="inbox-panel">
+  {% if flash %}
+  <div class="flash">{{ flash }}</div>
+  {% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>内容</th>
+          <th>创建时间(北京)</th>
+          <th>来源</th>
+          <th>created_by</th>
+          <th>rule_name</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.id }}</td>
+          <td class="content">{{ item.content }}</td>
+          <td>{{ item.created_at | bj_time }}</td>
+          <td>{{ item.source or '-' }}</td>
+          <td>{{ item.created_by or '-' }}</td>
+          <td>{{ item.rule_name or '-' }}</td>
+          <td>
+            <button class="btn small" hx-post="/inbox/{{ item.id }}/to-task" hx-target="#inbox-panel" hx-swap="outerHTML">转任务</button>
+            <button class="btn small secondary" hx-post="/inbox/{{ item.id }}/archive" hx-target="#inbox-panel" hx-swap="outerHTML">归档</button>
+            <button class="btn small ghost" hx-post="/inbox/{{ item.id }}/keep" hx-target="#inbox-panel" hx-swap="outerHTML">先留着</button>
+            <button class="btn small ghost" hx-get="/inbox/{{ item.id }}/history" hx-target="#history-{{ item.id }}" hx-swap="innerHTML">查看 history</button>
+          </td>
+        </tr>
+        <tr>
+          <td colspan="7"><div id="history-{{ item.id }}" class="history-slot"></div></td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="muted">当前没有待处理 inbox。</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

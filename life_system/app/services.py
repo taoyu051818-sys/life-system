@@ -352,6 +352,14 @@ class LifeSystemService:
     def list_tasks(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return self.task_repo.list(user_id=self.user_id, status=status, limit=limit)
 
+
+    def get_task_detail(self, task_id: int) -> dict[str, Any] | None:
+        rows = self.task_repo.list(user_id=self.user_id, status=None, limit=1000)
+        for row in rows:
+            if int(row["id"]) == task_id:
+                return row
+        return None
+
     def done_task(self, task_id: int) -> bool:
         updated = self.task_repo.mark_done(user_id=self.user_id, task_id=task_id, now=now_utc_iso())
         if updated:
@@ -455,6 +463,10 @@ class LifeSystemService:
                 result.append(processed)
         self.event_logger.log("reminder_due_sent", {"now": pivot_iso, "count": len(result), "failed": failed})
         return {"error": None, "items": result, "processed": len(result), "failed": failed}
+
+
+    def list_reminders(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.reminder_repo.list_for_user(user_id=self.user_id, limit=limit)
 
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
@@ -1111,3 +1123,9 @@ class InboxReviewService:
 
     def _to_iso(self, value: datetime) -> str:
         return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
+
+
+
+

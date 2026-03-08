@@ -1,0 +1,21 @@
+﻿{% extends "base.html" %}
+{% block title %}登录 | Life System{% endblock %}
+{% block content %}
+<section class="card login-card">
+  <h1>登录</h1>
+  <form method="post" action="/login" class="stack-form">
+    <label>
+      密码
+      <input type="password" name="password" required />
+    </label>
+    <label class="inline-check">
+      <input type="checkbox" name="remember" />
+      记住这台设备
+    </label>
+    <button class="btn" type="submit">登录</button>
+  </form>
+  {% if error %}
+  <p class="error">{{ error }}</p>
+  {% endif %}
+</section>
+{% endblock %}
