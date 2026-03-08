@@ -16,6 +16,7 @@ from life_system.infra.repositories import (
     ReminderEventRepository,
     ReminderRepository,
     TaskRepository,
+    TriageEventRepository,
     UserRepository,
 )
 
@@ -44,7 +45,9 @@ class LifeSystemService:
         self.abandon_repo = AbandonmentLogRepository(conn)
         self.anki_repo = AnkiDraftRepository(conn)
         self.journal_repo = JournalRepository(conn)
+        self.triage_event_repo = TriageEventRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
+        self._nonfatal_warnings: list[str] = []
 
     def capture_inbox(
         self,
@@ -88,6 +91,15 @@ class LifeSystemService:
         task_id = self.create_task(title=item["content"], inbox_item_id=inbox_item_id)
         if task_id is None:
             return None
+        self._record_triage_event(
+            inbox_item_id=inbox_item_id,
+            action="to_task",
+            target_type="task",
+            target_id=task_id,
+            created_by="manual",
+            source_rule_name=item.get("rule_name"),
+            source_rule_version=item.get("rule_version"),
+        )
         self.event_logger.log("inbox_triaged_to_task", {"inbox_item_id": inbox_item_id, "task_id": task_id})
         return task_id
 
@@ -102,6 +114,15 @@ class LifeSystemService:
             back="",
         )
         self.inbox_repo.mark_triaged(user_id=self.user_id, inbox_item_id=inbox_item_id, triaged_at=now_utc_iso())
+        self._record_triage_event(
+            inbox_item_id=inbox_item_id,
+            action="to_anki",
+            target_type="anki",
+            target_id=draft_id,
+            created_by="manual",
+            source_rule_name=item.get("rule_name"),
+            source_rule_version=item.get("rule_version"),
+        )
         self.event_logger.log("inbox_triaged_to_anki", {"inbox_item_id": inbox_item_id, "draft_id": draft_id})
         return draft_id
 
@@ -114,8 +135,31 @@ class LifeSystemService:
         updated = self.inbox_repo.mark_archived(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if not updated:
             return "not_found"
+        self._record_triage_event(
+            inbox_item_id=inbox_item_id,
+            action="to_archive",
+            target_type="archive",
+            target_id=None,
+            created_by="manual",
+            source_rule_name=item.get("rule_name"),
+            source_rule_version=item.get("rule_version"),
+        )
         self.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
         return "archived"
+
+    def inbox_history(self, inbox_item_id: int) -> list[dict[str, Any]] | None:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return None
+        return self.triage_event_repo.list_for_inbox(user_id=self.user_id, inbox_item_id=inbox_item_id)
+
+    def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
+
+    def pop_nonfatal_warnings(self) -> list[str]:
+        out = self._nonfatal_warnings[:]
+        self._nonfatal_warnings.clear()
+        return out
 
     def create_task(
         self,
@@ -559,6 +603,33 @@ class LifeSystemService:
         if pending_ack > 0:
             return "今天虽然正式完成项不多，但有真实记录和闭环动作。"
         return "今天证据还不多，先补一条简短记录会更稳。"
+
+
+    def _record_triage_event(
+        self,
+        inbox_item_id: int,
+        action: str,
+        target_type: str | None,
+        target_id: int | None,
+        created_by: str,
+        source_rule_name: str | None,
+        source_rule_version: str | None,
+    ) -> None:
+        try:
+            self.triage_event_repo.create(
+                user_id=self.user_id,
+                inbox_item_id=inbox_item_id,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                created_at=now_utc_iso(),
+                created_by=created_by,
+                source_rule_name=source_rule_name,
+                source_rule_version=source_rule_version,
+                payload=None,
+            )
+        except Exception:
+            self._nonfatal_warnings.append(f"triage_event_write_failed inbox_id={inbox_item_id} action={action}")
 
 
 class InboxReviewService:

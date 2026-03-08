@@ -200,6 +200,17 @@ Polling output includes:
   - with `telegram_chat_id`: Telegram text message
   - without `telegram_chat_id`: CLI fallback
 
+## Triage Outcome Logging
+
+- Inbox triage now writes `triage_events` on success:
+  - `to_task`
+  - `to_anki`
+  - `to_archive`
+- New commands:
+  - `python -m life_system.main inbox history <inbox_id>`
+  - `python -m life_system.main inbox triage-history --limit 50`
+- If event logging fails, main triage action still succeeds and CLI prints a warning.
+
 ## Abandonment Reason Presets
 
 - overwhelm

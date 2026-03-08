@@ -55,6 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     inbox_triage = inbox_sub.add_parser("triage", help="Route inbox item to task/anki/archive")
     inbox_triage.add_argument("inbox_id", type=int)
     inbox_triage.add_argument("target", choices=["task", "anki", "archive"])
+    inbox_history = inbox_sub.add_parser("history", help="Show triage events for one inbox item")
+    inbox_history.add_argument("inbox_id", type=int)
+    inbox_triage_history = inbox_sub.add_parser("triage-history", help="Show recent triage events")
+    inbox_triage_history.add_argument("--limit", type=int, default=50)
     inbox_review_due = inbox_sub.add_parser("review-due", help="Check inbox review reminder candidates")
     inbox_review_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     inbox_review_send = inbox_sub.add_parser("review-send", help="Send inbox review reminders")
@@ -515,6 +519,8 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
                 print("inbox item not found")
                 return 1
             print(f"inbox triaged to task: inbox_id={args.inbox_id} task_id={task_id}")
+            for warning in service.pop_nonfatal_warnings():
+                print(f"warning: {warning}")
             return 0
         if args.target == "anki":
             draft_id = service.triage_inbox_to_anki(args.inbox_id)
@@ -522,16 +528,43 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
                 print("inbox item not found")
                 return 1
             print(f"inbox triaged to anki: inbox_id={args.inbox_id} draft_id={draft_id}")
+            for warning in service.pop_nonfatal_warnings():
+                print(f"warning: {warning}")
             return 0
         status = service.archive_inbox(args.inbox_id)
         if status == "archived":
             print("inbox archived")
+            for warning in service.pop_nonfatal_warnings():
+                print(f"warning: {warning}")
             return 0
         if status == "already_archived":
             print("already archived")
             return 0
         print("inbox item not found")
         return 1
+
+    if entity == "inbox" and action == "history":
+        rows = service.inbox_history(args.inbox_id)
+        if rows is None:
+            print("inbox item not found")
+            return 1
+        for row in rows:
+            print(
+                f"[{row['id']}] {row['created_at']} | action={row['action']} | "
+                f"target={row['target_type']}:{row['target_id']} | by={row['created_by']} | "
+                f"rule={_fmt_optional(row['source_rule_name'])}/{_fmt_optional(row['source_rule_version'])}"
+            )
+        return 0
+
+    if entity == "inbox" and action == "triage-history":
+        rows = service.triage_history(limit=args.limit)
+        for row in rows:
+            print(
+                f"[{row['id']}] inbox={row['inbox_item_id']} | {row['created_at']} | action={row['action']} | "
+                f"target={row['target_type']}:{row['target_id']} | by={row['created_by']} | "
+                f"rule={_fmt_optional(row['source_rule_name'])}/{_fmt_optional(row['source_rule_version'])}"
+            )
+        return 0
 
     if entity == "task" and action == "create":
         task_id = service.create_task(

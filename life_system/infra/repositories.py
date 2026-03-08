@@ -995,3 +995,74 @@ class AppStateRepository:
             (key, value, updated_at),
         )
         self.conn.commit()
+
+
+class TriageEventRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        user_id: int,
+        inbox_item_id: int,
+        action: str,
+        target_type: str | None,
+        target_id: int | None,
+        created_at: str,
+        created_by: str,
+        source_rule_name: str | None,
+        source_rule_version: str | None,
+        payload: str | None = None,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO triage_events(
+              user_id, inbox_item_id, action, target_type, target_id,
+              created_at, created_by, source_rule_name, source_rule_version, payload
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                inbox_item_id,
+                action,
+                target_type,
+                target_id,
+                created_at,
+                created_by,
+                source_rule_name,
+                source_rule_version,
+                payload,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def list_for_inbox(self, user_id: int, inbox_item_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, user_id, inbox_item_id, action, target_type, target_id,
+              created_at, created_by, source_rule_name, source_rule_version, payload
+            FROM triage_events
+            WHERE user_id = ? AND inbox_item_id = ?
+            ORDER BY created_at ASC, id ASC
+            """,
+            (user_id, inbox_item_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_recent(self, user_id: int, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, user_id, inbox_item_id, action, target_type, target_id,
+              created_at, created_by, source_rule_name, source_rule_version, payload
+            FROM triage_events
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]

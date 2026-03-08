@@ -406,6 +406,115 @@ class TestCliFlows(unittest.TestCase):
             _, sn2 = run_with_output(["--db", db_path, "reminder", "snooze", "3", "2026-03-08T09:00:00+08:00"])
             self.assertIn("already snoozed to 2026-03-08T09:00:00+08:00", sn2)
 
+    def test_triage_event_to_task_anki_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "capture", "to task"])
+            run_with_output(["--db", db_path, "capture", "to anki"])
+            run_with_output(["--db", db_path, "capture", "to archive"])
+            run_with_output(["--db", db_path, "inbox", "triage", "1", "task"])
+            run_with_output(["--db", db_path, "inbox", "triage", "2", "anki"])
+            run_with_output(["--db", db_path, "inbox", "triage", "3", "archive"])
+
+            with connection_ctx(Path(db_path)) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT inbox_item_id, action, target_type, target_id, created_by
+                    FROM triage_events
+                    WHERE user_id = 1
+                    ORDER BY id ASC
+                    """
+                ).fetchall()
+                self.assertEqual(len(rows), 3)
+                self.assertEqual(rows[0]["action"], "to_task")
+                self.assertEqual(rows[0]["target_type"], "task")
+                self.assertEqual(rows[1]["action"], "to_anki")
+                self.assertEqual(rows[1]["target_type"], "anki")
+                self.assertEqual(rows[2]["action"], "to_archive")
+                self.assertEqual(rows[2]["target_type"], "archive")
+                self.assertTrue(all(row["created_by"] == "manual" for row in rows))
+
+    def test_triage_event_source_rule_passthrough(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id
+                del text
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "明天联系房东"}}]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", str(db_path), "telegram", "poll"])
+            run_with_output(["--db", str(db_path), "inbox", "triage", "1", "task"])
+            with connection_ctx(db_path) as conn:
+                ev = conn.execute(
+                    """
+                    SELECT source_rule_name, source_rule_version
+                    FROM triage_events
+                    WHERE user_id = 1 AND inbox_item_id = 1
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                self.assertEqual(ev["source_rule_name"], "time_plus_action")
+                self.assertEqual(ev["source_rule_version"], "inbox_v1")
+
+    def test_triage_event_multi_user_isolation_and_history_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "x item"])
+            run_with_output(["--db", db_path, "--user", "partner", "capture", "p item"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "inbox", "triage", "1", "archive"])
+            run_with_output(["--db", db_path, "--user", "partner", "inbox", "triage", "2", "archive"])
+
+            _, out_x = run_with_output(["--db", db_path, "--user", "xiaoyu", "inbox", "triage-history", "--limit", "10"])
+            _, out_p = run_with_output(["--db", db_path, "--user", "partner", "inbox", "triage-history", "--limit", "10"])
+            self.assertIn("inbox=1", out_x)
+            self.assertNotIn("inbox=2", out_x)
+            self.assertIn("inbox=2", out_p)
+            self.assertNotIn("inbox=1", out_p)
+
+            rc_hist, out_hist = run_with_output(["--db", db_path, "--user", "xiaoyu", "inbox", "history", "1"])
+            self.assertEqual(rc_hist, 0)
+            self.assertIn("action=to_archive", out_hist)
+
+            rc_not_found, out_not_found = run_with_output(
+                ["--db", db_path, "--user", "xiaoyu", "inbox", "history", "2"]
+            )
+            self.assertEqual(rc_not_found, 1)
+            self.assertIn("inbox item not found", out_not_found)
+
+    def test_triage_event_write_failure_does_not_rollback_main_action(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "capture", "to archive with fail"])
+            with patch("life_system.app.services.TriageEventRepository.create", side_effect=RuntimeError("db write failed")):
+                rc, out = run_with_output(["--db", db_path, "inbox", "triage", "1", "archive"])
+            self.assertEqual(rc, 0)
+            self.assertIn("inbox archived", out)
+            self.assertIn("warning: triage_event_write_failed", out)
+            with connection_ctx(Path(db_path)) as conn:
+                row = conn.execute("SELECT status FROM inbox_items WHERE id = 1").fetchone()
+                self.assertEqual(row["status"], "archived")
+
     def test_journal_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
