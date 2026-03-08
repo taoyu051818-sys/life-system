@@ -160,6 +160,8 @@ def build_parser() -> argparse.ArgumentParser:
     telegram_poll.add_argument("--limit", type=int, default=20)
     telegram_sub.add_parser("setup-menu", help="Setup Telegram command menu")
     telegram_sub.add_parser("setup-keyboard", help="Push focus keyboard to configured private chats")
+    telegram_inbox_review = telegram_sub.add_parser("inbox-review", help="Send pending inbox items to Telegram")
+    telegram_inbox_review.add_argument("--limit", type=int, default=5)
 
     return parser
 
@@ -210,7 +212,7 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                     print(f"telegram setup-menu failed: {exc}")
                     return 1
                 if result.get("menu_button", True):
-                    print("telegram 菜单已设置：/r /w /c /help")
+                    print("telegram 菜单已设置：/r /w /c /ir /help")
                 else:
                     print("telegram 命令菜单已设置；菜单按钮未设置成功")
                 return 0
@@ -227,6 +229,33 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                     except RuntimeError:
                         failed += 1
                 print(f"telegram keyboard setup: pushed={pushed}, failed={failed}")
+                return 0
+            if args.action == "inbox-review":
+                user = user_repo.get_by_username(args.user)
+                if user is None:
+                    print(f"user not found: {args.user}")
+                    return 1
+                chat_id = user.get("telegram_chat_id")
+                if not chat_id:
+                    print(f"user has no telegram_chat_id: {args.user}")
+                    return 1
+                service = LifeSystemService(
+                    conn,
+                    user_id=user["id"],
+                    username=user["username"],
+                    telegram_chat_id=user.get("telegram_chat_id"),
+                    reminder_sender=sender,
+                )
+                items = service.list_new_inbox_oldest(limit=args.limit)
+                sent = 0
+                failed = 0
+                for item in items:
+                    try:
+                        sender.send_inbox_review_item(str(chat_id), int(item["id"]), str(item["content"]))
+                        sent += 1
+                    except RuntimeError:
+                        failed += 1
+                print(f"telegram inbox-review: sent={sent}, failed={failed}, total={len(items)}")
                 return 0
             poller = TelegramPollingService(conn, sender)
             try:

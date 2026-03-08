@@ -4,7 +4,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from life_system.app.services import LifeSystemService
+from life_system.app.services import InboxReviewService, LifeSystemService
 from life_system.infra.db import now_utc_iso
 from life_system.infra.repositories import AppStateRepository, UserRepository
 
@@ -15,6 +15,7 @@ _HELP_TEXT = (
     "普通文本：记录为 activity\n"
     "/r 今天学到了什么\n"
     "/w 今天完成了什么\n"
+    "/ir 收件箱回顾入口\n"
     "/c energy=4 focus=3 mood=5 今天状态不错"
 )
 _FOCUS_BUTTON_TO_CMD = {
@@ -175,11 +176,24 @@ def parse_callback_data(data: str) -> tuple[str, int] | None:
     if not data or ":" not in data:
         return None
     action, rid = data.split(":", 1)
-    if action not in {"ra", "rz", "rk"}:
+    if action not in {"ra", "rz", "rk", "it", "ia", "ik"}:
         return None
     if not rid.isdigit():
         return None
     return action, int(rid)
+
+
+def parse_review_session_callback(data: str) -> tuple[str, str] | None:
+    if data in {"irms", "irmc"}:
+        return data, ""
+    if not data or ":" not in data:
+        return None
+    action, day = data.split(":", 1)
+    if action not in {"irs", "irn", "irk"}:
+        return None
+    if not re.fullmatch(r"\d{8}", day):
+        return None
+    return action, day
 
 
 def parse_journal_message(text: str) -> dict[str, Any]:
@@ -195,6 +209,8 @@ def parse_journal_message(text: str) -> dict[str, Any]:
 
         if cmd == "/help":
             return {"kind": "help", "reply": _HELP_TEXT}
+        if cmd == "/ir":
+            return {"kind": "manual_inbox_review"}
         if cmd not in {"/r", "/w", "/c"}:
             return {"kind": "ignore"}
         if not payload:
@@ -267,6 +283,7 @@ def parse_journal_message(text: str) -> dict[str, Any]:
 
 class TelegramPollingService:
     OFFSET_KEY = "telegram.update_offset"
+    INBOX_REVIEW_LIMIT = 5
 
     def __init__(self, conn: Any, telegram_sender: Any):
         self.conn = conn
@@ -347,13 +364,6 @@ class TelegramPollingService:
     def _process_callback_query(self, cq: dict[str, Any]) -> None:
         callback_id = str(cq.get("id", ""))
         data = str(cq.get("data", ""))
-        parsed = parse_callback_data(data)
-        if not parsed:
-            if callback_id:
-                self._safe_answer(callback_id, "无法识别操作")
-            return
-
-        action, reminder_id = parsed
         chat_id = self._extract_chat_id(cq)
         if chat_id is None:
             if callback_id:
@@ -373,23 +383,48 @@ class TelegramPollingService:
             telegram_chat_id=user.get("telegram_chat_id"),
             reminder_sender=self.telegram_sender,
         )
+        review_service = InboxReviewService(self.conn, telegram_sender=self.telegram_sender)
 
-        if action == "ra":
-            status = service.ack_reminder(reminder_id, acked_via="telegram")
-            text = "已确认" if status == "acknowledged" else "已经处理过了"
-        elif action == "rz":
-            dt = datetime.now(timezone.utc) + timedelta(minutes=10)
-            remind_at = dt.replace(microsecond=0).isoformat()
-            status = service.snooze_reminder(reminder_id, remind_at)
-            text = "已延后10分钟" if status == "snoozed" else "已经处理过了"
-        else:
-            status = service.skip_reminder(reminder_id, reason="telegram_skip")
-            text = "已跳过今天" if status == "skipped" else "已经处理过了"
+        parsed = parse_callback_data(data)
+        if parsed:
+            action, target_id = parsed
+            if action == "ra":
+                status = service.ack_reminder(target_id, acked_via="telegram")
+                text = "已确认" if status == "acknowledged" else "已经处理过了"
+            elif action == "rz":
+                dt = datetime.now(timezone.utc) + timedelta(minutes=10)
+                remind_at = dt.replace(microsecond=0).isoformat()
+                status = service.snooze_reminder(target_id, remind_at)
+                text = "已延后10分钟" if status == "snoozed" else "已经处理过了"
+            elif action == "rk":
+                status = service.skip_reminder(target_id, reason="telegram_skip")
+                text = "已跳过今天" if status == "skipped" else "已经处理过了"
+            else:
+                text = self._process_inbox_callback(action=action, inbox_id=target_id, service=service)
 
-        if status == "not_found":
-            text = "提醒不存在或无权限"
+            if action in {"ra", "rz", "rk"} and status == "not_found":
+                text = "提醒不存在或无权限"
+            if callback_id:
+                self._safe_answer(callback_id, text)
+            self._safe_clear_inline_keyboard(cq)
+            return
+
+        review_parsed = parse_review_session_callback(data)
+        if review_parsed:
+            action, day = review_parsed
+            text = self._process_review_callback(
+                action=action,
+                day=day,
+                user=user,
+                review_service=review_service,
+            )
+            if callback_id:
+                self._safe_answer(callback_id, text)
+            self._safe_clear_inline_keyboard(cq)
+            return
+
         if callback_id:
-            self._safe_answer(callback_id, text)
+            self._safe_answer(callback_id, "无法识别操作")
 
     def _process_message(self, msg: dict[str, Any]) -> dict[str, Any]:
         chat = msg.get("chat")
@@ -416,6 +451,8 @@ class TelegramPollingService:
         if kind == "help":
             self._safe_send_message(chat_id, str(parsed.get("reply") or _HELP_TEXT), with_keyboard=True)
             return {"handled": True, "reason": "help"}
+        if kind == "manual_inbox_review":
+            return self._handle_manual_inbox_review(chat_id=chat_id, user=user)
         if kind == "ignore":
             return {"handled": False, "reason": "unsupported_command"}
 
@@ -499,3 +536,101 @@ class TelegramPollingService:
         except Exception:
             # Journal capture should not rollback when reply fails.
             pass
+
+    def _safe_clear_inline_keyboard(self, cq: dict[str, Any]) -> None:
+        try:
+            msg = cq.get("message")
+            if not isinstance(msg, dict):
+                return
+            chat = msg.get("chat")
+            if not isinstance(chat, dict):
+                return
+            chat_id = chat.get("id")
+            message_id = msg.get("message_id")
+            if chat_id is None or message_id is None:
+                return
+            if hasattr(self.telegram_sender, "clear_message_inline_keyboard"):
+                self.telegram_sender.clear_message_inline_keyboard(str(chat_id), int(message_id))
+        except Exception:
+            # Do not block action when message edit fails.
+            pass
+
+    def _process_inbox_callback(self, action: str, inbox_id: int, service: LifeSystemService) -> str:
+        triage_status = service.inbox_triage_status(inbox_id)
+        if action == "ik":
+            return "先留在收件箱"
+        if triage_status in {"already_triaged", "already_archived"}:
+            return "已处理过了"
+        if triage_status == "not_found":
+            return "收件箱不存在或无权限"
+        if action == "it":
+            task_id = service.triage_inbox_to_task(inbox_id, created_by="telegram_auto_followup")
+            return "已转为任务" if task_id is not None else "已处理过了"
+        if action == "ia":
+            status = service.archive_inbox(inbox_id, created_by="telegram_auto_followup")
+            return "已归档" if status == "archived" else "已处理过了"
+        return "无法识别操作"
+
+    def _handle_manual_inbox_review(self, chat_id: str, user: dict[str, Any]) -> dict[str, Any]:
+        service = LifeSystemService(
+            self.conn,
+            user_id=user["id"],
+            username=user["username"],
+            telegram_chat_id=user.get("telegram_chat_id"),
+            reminder_sender=self.telegram_sender,
+        )
+        count = len(service.list_new_inbox_oldest(limit=10000))
+        if count <= 0:
+            self._safe_send_message(chat_id, "你当前没有需要回顾的 inbox。", with_keyboard=True)
+            return {"handled": True, "reason": "manual_ir_empty"}
+        if hasattr(self.telegram_sender, "send_manual_inbox_review_prompt"):
+            try:
+                self.telegram_sender.send_manual_inbox_review_prompt(chat_id, count)
+            except Exception:
+                self._safe_send_message(chat_id, f"你当前还有 {count} 条 inbox 未处理。要现在开始逐条回顾吗？", with_keyboard=True)
+        else:
+            self._safe_send_message(chat_id, f"你当前还有 {count} 条 inbox 未处理。要现在开始逐条回顾吗？", with_keyboard=True)
+        return {"handled": True, "reason": "manual_ir_prompt"}
+
+    def _process_review_callback(
+        self,
+        action: str,
+        day: str,
+        user: dict[str, Any],
+        review_service: InboxReviewService,
+    ) -> str:
+        user_id = int(user["id"])
+        if action == "irms":
+            sent = review_service.send_inbox_review_items_for_user(user_id=user_id, limit=self.INBOX_REVIEW_LIMIT)
+            return "已开始回顾" if sent > 0 else "当前没有可回顾 inbox"
+        if action == "irmc":
+            return "已取消"
+        day_fmt = f"{day[0:4]}-{day[4:6]}-{day[6:8]}"
+        if action == "irs":
+            result = review_service.handle_session_action(
+                user_id=user_id,
+                day=day_fmt,
+                action="start",
+                now=now_utc_iso(),
+                review_limit=self.INBOX_REVIEW_LIMIT,
+            )
+            return str(result.get("message", "已开始回顾"))
+        if action == "irn":
+            result = review_service.handle_session_action(
+                user_id=user_id,
+                day=day_fmt,
+                action="snooze",
+                now=now_utc_iso(),
+                review_limit=self.INBOX_REVIEW_LIMIT,
+            )
+            return str(result.get("message", "已延后半小时"))
+        if action == "irk":
+            result = review_service.handle_session_action(
+                user_id=user_id,
+                day=day_fmt,
+                action="skip",
+                now=now_utc_iso(),
+                review_limit=self.INBOX_REVIEW_LIMIT,
+            )
+            return str(result.get("message", "今天已跳过"))
+        return "无法识别操作"

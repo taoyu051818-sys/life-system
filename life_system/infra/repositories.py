@@ -8,6 +8,19 @@ class UserRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
+    def get_by_id(self, user_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, username, display_name, created_at, telegram_chat_id
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
     def get_by_username(self, username: str) -> dict[str, Any] | None:
         row = self.conn.execute(
             """
@@ -281,6 +294,21 @@ class InboxRepository:
             FROM inbox_items
             WHERE user_id = ? AND created_by = 'telegram_auto'
             ORDER BY id ASC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_new_oldest(self, user_id: int, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, content, source, status, created_at, triaged_at,
+              source_journal_entry_id, created_by, rule_name, rule_version
+            FROM inbox_items
+            WHERE user_id = ? AND status = 'new'
+            ORDER BY created_at ASC, id ASC
             LIMIT ?
             """,
             (user_id, limit),
