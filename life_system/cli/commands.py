@@ -212,7 +212,7 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                     print(f"telegram setup-menu failed: {exc}")
                     return 1
                 if result.get("menu_button", True):
-                    print("telegram 菜单已设置：/r /w /c /help")
+                    print("telegram 菜单已设置：/r /w /c /ir /help")
                 else:
                     print("telegram 命令菜单已设置；菜单按钮未设置成功")
                 return 0

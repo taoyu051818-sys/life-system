@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sqlite3
 from csv import DictWriter
 from datetime import datetime, timedelta, timezone
@@ -836,6 +836,7 @@ class LifeSystemService:
 class InboxReviewService:
     REVIEW_WINDOW_HOUR = 20
     REVIEW_WINDOW_MINUTE = 30
+    MAX_SNOOZE_PER_DAY = 3
 
     def __init__(self, conn: sqlite3.Connection, telegram_sender: Any | None = None):
         self.conn = conn
@@ -850,12 +851,85 @@ class InboxReviewService:
     def review_send(self, now: str | None = None) -> dict[str, Any]:
         return self._run(now=now, send=True)
 
+    def send_inbox_review_items_for_user(self, user_id: int, limit: int = 5) -> int:
+        user = self.user_repo.get_by_id(user_id)
+        if user is None:
+            return 0
+        items = self.inbox_repo.list_new_oldest(user_id=user_id, limit=limit)
+        if not items:
+            return 0
+
+        chat_id = user.get("telegram_chat_id")
+        sent = 0
+        for item in items:
+            if chat_id and self.telegram_sender is not None and hasattr(self.telegram_sender, "send_inbox_review_item"):
+                try:
+                    self.telegram_sender.send_inbox_review_item(str(chat_id), int(item["id"]), str(item["content"]))
+                    sent += 1
+                except Exception:
+                    continue
+            else:
+                print(f"[{user['username']}] 【收件箱】#{item['id']} {item['content']}")
+                sent += 1
+        return sent
+
+    def handle_session_action(
+        self,
+        user_id: int,
+        day: str,
+        action: str,
+        now: str | None = None,
+        review_limit: int = 5,
+    ) -> dict[str, Any]:
+        now_iso = now or now_utc_iso()
+        session = self._load_session(user_id=user_id, day=day)
+        if session is None:
+            return {"ok": False, "message": "今日会话不存在或已失效"}
+
+        status = str(session.get("status") or "pending")
+        if action == "start":
+            if status == "skipped":
+                return {"ok": False, "message": "今天已跳过"}
+            sent = self.send_inbox_review_items_for_user(user_id=user_id, limit=review_limit)
+            if sent <= 0:
+                return {"ok": False, "message": "当前没有可回顾 inbox"}
+            session["status"] = "started"
+            session["started_at"] = now_iso
+            session["last_action"] = "start_review"
+            self._save_session(user_id=user_id, day=day, session=session, updated_at=now_iso)
+            return {"ok": True, "message": "已开始回顾", "sent": sent}
+
+        if action == "snooze":
+            if status in {"started", "skipped"}:
+                return {"ok": False, "message": "已经处理过了"}
+            snooze_count = int(session.get("snooze_count") or 0)
+            if snooze_count >= self.MAX_SNOOZE_PER_DAY:
+                return {"ok": False, "message": "今天延后次数已达上限"}
+            due_at = self._parse_iso(str(session["due_at"])) + timedelta(minutes=30)
+            session["due_at"] = self._to_iso(due_at)
+            session["snooze_count"] = snooze_count + 1
+            session["status"] = "snoozed"
+            session["last_action"] = "snooze_30m"
+            self._save_session(user_id=user_id, day=day, session=session, updated_at=now_iso)
+            return {"ok": True, "message": "已延后半小时", "due_at": session["due_at"]}
+
+        if action == "skip":
+            if status == "skipped":
+                return {"ok": False, "message": "今天已跳过"}
+            session["status"] = "skipped"
+            session["skipped_at"] = now_iso
+            session["last_action"] = "skip_today"
+            self._save_session(user_id=user_id, day=day, session=session, updated_at=now_iso)
+            return {"ok": True, "message": "今天已跳过"}
+
+        return {"ok": False, "message": "无法识别操作"}
+
     def _run(self, now: str | None, send: bool) -> dict[str, Any]:
         now_iso = now or now_utc_iso()
-        now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+        now_dt = self._parse_iso(now_iso)
         now_cst = now_dt.astimezone(CST)
         day_cst = now_cst.date().isoformat()
-        window_reached = (now_cst.hour, now_cst.minute) >= (self.REVIEW_WINDOW_HOUR, self.REVIEW_WINDOW_MINUTE)
+        base_due_dt = self._session_base_due(day_cst)
 
         stats: dict[str, Any] = {
             "checked_users": 0,
@@ -869,21 +943,27 @@ class InboxReviewService:
         }
 
         users = self.user_repo.list_all()
-        if not window_reached:
-            stats["skipped_before_window"] = len(users)
-            return stats
-
         for user in users:
             stats["checked_users"] += 1
             user_id = int(user["id"])
-            sent_key = f"inbox_review_sent:{user_id}:{day_cst}"
-            if self.state_repo.get(sent_key):
-                stats["skipped_already_sent"] += 1
-                continue
-
             pending = self.inbox_repo.count_unprocessed(user_id=user_id)
             if pending <= 0:
                 stats["skipped_empty"] += 1
+                continue
+
+            session = self._load_or_create_session(user_id=user_id, day=day_cst, now_iso=now_iso, base_due_dt=base_due_dt)
+            status = str(session.get("status") or "pending")
+            if status in {"started", "skipped"}:
+                stats["skipped_already_sent"] += 1
+                continue
+
+            due_at = self._parse_iso(str(session["due_at"]))
+            if now_dt < due_at:
+                stats["skipped_before_window"] += 1
+                continue
+
+            if session.get("last_offered_due_at") == session.get("due_at"):
+                stats["skipped_already_sent"] += 1
                 continue
 
             oldest_created_at = self.inbox_repo.oldest_unprocessed_created_at(user_id=user_id)
@@ -895,39 +975,125 @@ class InboxReviewService:
             if not send:
                 continue
 
-            msg = self._build_message(
-                username=str(user["username"]),
-                pending=pending,
-                oldest_hours=oldest_hours,
-                escalated=escalated,
-            )
-            chat_id = user.get("telegram_chat_id")
             delivered = False
+            message_id = None
+            chat_id = user.get("telegram_chat_id")
+            allow_snooze = int(session.get("snooze_count") or 0) < self.MAX_SNOOZE_PER_DAY
             if chat_id:
                 if self.telegram_sender is None:
                     stats["failed"] += 1
                 else:
                     try:
-                        self.telegram_sender.send_message(str(chat_id), msg)
+                        if hasattr(self.telegram_sender, "send_auto_inbox_review_entry"):
+                            day_compact = day_cst.replace("-", "")
+                            message_id = self.telegram_sender.send_auto_inbox_review_entry(
+                                str(chat_id),
+                                day_compact,
+                                pending,
+                                escalated,
+                                allow_snooze,
+                            )
+                        else:
+                            msg = self._build_legacy_message(
+                                username=str(user["username"]),
+                                pending=pending,
+                                oldest_hours=oldest_hours,
+                                escalated=escalated,
+                            )
+                            message_id = self.telegram_sender.send_message(str(chat_id), msg)
                         delivered = True
                     except Exception:
                         stats["failed"] += 1
             else:
+                msg = self._build_legacy_message(
+                    username=str(user["username"]),
+                    pending=pending,
+                    oldest_hours=oldest_hours,
+                    escalated=escalated,
+                )
                 print(f"[{user['username']}] {msg}")
                 stats["fallback_cli"] += 1
                 delivered = True
 
             if delivered:
                 stats["sent"] += 1
-                self.state_repo.set(sent_key, now_iso, now_iso)
+                session["status"] = "offered"
+                session["sent_at"] = now_iso
+                session["last_action"] = "offer"
+                session["last_offered_due_at"] = session["due_at"]
+                session["offered_message_id"] = message_id
+                self._save_session(user_id=user_id, day=day_cst, session=session, updated_at=now_iso)
+                self._mark_review_sent_compat(user_id=user_id, day=day_cst, now_iso=now_iso)
 
         return stats
+
+    def _session_key(self, user_id: int, day: str) -> str:
+        return f"inbox_review_session:{user_id}:{day}"
+
+    def _load_session(self, user_id: int, day: str) -> dict[str, Any] | None:
+        value = self.state_repo.get(self._session_key(user_id, day))
+        if not value:
+            return None
+        try:
+            data = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
+
+    def _new_session(self, day: str, now_iso: str, base_due_dt: datetime) -> dict[str, Any]:
+        due_iso = self._to_iso(base_due_dt)
+        return {
+            "date": day,
+            "timezone": "Asia/Shanghai",
+            "base_due_at": due_iso,
+            "due_at": due_iso,
+            "status": "pending",
+            "sent_at": None,
+            "started_at": None,
+            "skipped_at": None,
+            "snooze_count": 0,
+            "last_action": "create_session",
+            "last_offered_due_at": None,
+            "offered_message_id": None,
+            "created_at": now_iso,
+        }
+
+    def _load_or_create_session(self, user_id: int, day: str, now_iso: str, base_due_dt: datetime) -> dict[str, Any]:
+        session = self._load_session(user_id=user_id, day=day)
+        if session is not None:
+            return session
+        session = self._new_session(day=day, now_iso=now_iso, base_due_dt=base_due_dt)
+        self._save_session(user_id=user_id, day=day, session=session, updated_at=now_iso)
+        return session
+
+    def _save_session(self, user_id: int, day: str, session: dict[str, Any], updated_at: str) -> None:
+        self.state_repo.set(
+            self._session_key(user_id, day),
+            json.dumps(session, ensure_ascii=True),
+            updated_at,
+        )
+
+    def _mark_review_sent_compat(self, user_id: int, day: str, now_iso: str) -> None:
+        key = f"inbox_review_sent:{user_id}:{day}"
+        if self.state_repo.get(key) is None:
+            self.state_repo.set(key, now_iso, now_iso)
+
+    def _session_base_due(self, day: str) -> datetime:
+        return datetime.strptime(day, "%Y-%m-%d").replace(
+            hour=self.REVIEW_WINDOW_HOUR,
+            minute=self.REVIEW_WINDOW_MINUTE,
+            second=0,
+            microsecond=0,
+            tzinfo=CST,
+        ).astimezone(timezone.utc)
 
     def _oldest_age_hours(self, now_dt: datetime, created_at: str | None) -> int:
         if not created_at:
             return 0
         try:
-            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            dt = self._parse_iso(created_at)
         except ValueError:
             return 0
         delta = now_dt - dt
@@ -935,7 +1101,13 @@ class InboxReviewService:
             return 0
         return int(delta.total_seconds() // 3600)
 
-    def _build_message(self, username: str, pending: int, oldest_hours: int, escalated: bool) -> str:
+    def _build_legacy_message(self, username: str, pending: int, oldest_hours: int, escalated: bool) -> str:
         if escalated:
             return f"【收件箱强提醒】{username}，未处理 {pending} 条，最老约 {oldest_hours} 小时，请尽快 triage。"
-        return f"【收件箱提醒】{username}，还有 {pending} 条未处理，抽 2 分钟做一下 triage。"
+        return f"【收件箱提醒】{username}，还有 {pending} 条未处理，抽 2 分钟做一个 triage。"
+
+    def _parse_iso(self, value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def _to_iso(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()

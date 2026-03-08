@@ -161,6 +161,7 @@ Message rules:
 - `/r <text>`: `reflection`
 - `/w <text>`: `win`
 - `/c <text>`: `checkin`
+- `/ir`: inbox review manual entry (confirm first, then start)
 - `/help`: show concise usage help in Chinese
 - `/c` supports optional leading state fields:
   - `energy=1..5`
@@ -205,8 +206,13 @@ Polling output includes:
 - Commands:
   - `python -m life_system.main inbox review-due`
   - `python -m life_system.main inbox review-send`
-- Uses Asia/Shanghai day and 20:30 window.
-- Sends at most once per user per day when unprocessed inbox items exist.
+- Uses Asia/Shanghai day and 20:30 base due time.
+- `review-send` sends Telegram entry message first (not direct item flood), with buttons:
+  - `开始回顾`
+  - `延后半小时` (max 3 times per day)
+  - `今天跳过`
+- `开始回顾` then triggers existing `telegram inbox-review` item flow.
+- Same due point is idempotent and will not be sent repeatedly.
 - Escalates when:
   - unprocessed inbox >= 7
   - oldest unprocessed item >= 72 hours

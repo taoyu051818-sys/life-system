@@ -1614,7 +1614,7 @@ class TestCliFlows(unittest.TestCase):
                 with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=FakeSender()):
                     rc, out = run_with_output(["--db", db_path, "telegram", "setup-menu"])
             self.assertEqual(rc, 0)
-            self.assertIn("/r /w /c /help", out)
+            self.assertIn("/r /w /c /ir /help", out)
 
     def test_telegram_setup_keyboard_command(self) -> None:
         class FakeSender:
@@ -2234,6 +2234,204 @@ class TestCliFlows(unittest.TestCase):
                 self.assertEqual(row["rule_name"], "time_plus_action")
                 self.assertEqual(row["rule_version"], "inbox_v1")
                 self.assertIsNotNone(row["source_journal_entry_id"])
+
+    def test_setup_menu_output_includes_ir(self) -> None:
+        class FakeSender:
+            def setup_menu(self) -> dict[str, bool]:
+                return {"commands": True, "menu_button": True}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "TOKEN"}):
+                with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=FakeSender()):
+                    rc, out = run_with_output(["--db", db_path, "telegram", "setup-menu"])
+        self.assertEqual(rc, 0)
+        self.assertIn("/ir", out)
+
+    def test_inbox_review_send_uses_entry_buttons_and_idempotent_due(self) -> None:
+        class FakeSender:
+            def __init__(self):
+                self.entries: list[tuple[str, str, int, bool, bool]] = []
+
+            def send_auto_inbox_review_entry(
+                self, chat_id: str, day_yyyymmdd: str, count: int, strong: bool, allow_snooze: bool
+            ) -> str:
+                self.entries.append((chat_id, day_yyyymmdd, count, strong, allow_snooze))
+                return "m42"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "a"])
+            fake = FakeSender()
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc1, out1 = run_with_output(["--db", db_path, "inbox", "review-send", "--now", "2026-03-08T12:30:00+00:00"])
+                rc2, out2 = run_with_output(["--db", db_path, "inbox", "review-send", "--now", "2026-03-08T12:35:00+00:00"])
+            self.assertEqual(rc1, 0)
+            self.assertEqual(rc2, 0)
+            self.assertIn("sent=1", out1)
+            self.assertIn("skipped_already_sent=1", out2)
+            self.assertEqual(len(fake.entries), 1)
+            self.assertEqual(fake.entries[0][1], "20260308")
+            with connection_ctx(Path(db_path)) as conn:
+                row = conn.execute(
+                    "SELECT value, updated_at FROM app_state WHERE key='inbox_review_session:1:2026-03-08'"
+                ).fetchone()
+                self.assertEqual(row["updated_at"], "2026-03-08T12:30:00+00:00")
+                data = json.loads(row["value"])
+                self.assertEqual(data["status"], "offered")
+                self.assertEqual(data["last_offered_due_at"], data["due_at"])
+
+    def test_inbox_review_snooze_then_send_at_new_due(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.entries: list[str] = []
+                self.answers: list[tuple[str, str]] = []
+
+            def send_auto_inbox_review_entry(
+                self, chat_id: str, day_yyyymmdd: str, count: int, strong: bool, allow_snooze: bool
+            ) -> str:
+                del chat_id, count, strong, allow_snooze
+                self.entries.append(day_yyyymmdd)
+                return "m1"
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset, limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+            def clear_message_inline_keyboard(self, chat_id: str, message_id: int) -> None:
+                del chat_id, message_id
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id, text
+                return "m2"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "a"])
+            fake = FakeSender(
+                [{"update_id": 1, "callback_query": {"id": "c1", "data": "irn:20260308", "message": {"chat": {"id": 1001}, "message_id": 10}}}]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", db_path, "inbox", "review-send", "--now", "2026-03-08T12:30:00+00:00"])
+                run_with_output(["--db", db_path, "telegram", "poll"])
+                rc_early, out_early = run_with_output(
+                    ["--db", db_path, "inbox", "review-send", "--now", "2026-03-08T12:50:00+00:00"]
+                )
+                rc_due, out_due = run_with_output(
+                    ["--db", db_path, "inbox", "review-send", "--now", "2026-03-08T13:00:00+00:00"]
+                )
+            self.assertEqual(rc_early, 0)
+            self.assertEqual(rc_due, 0)
+            self.assertIn("sent=0", out_early)
+            self.assertIn("sent=1", out_due)
+            self.assertTrue(any(a[0] == "c1" for a in fake.answers))
+
+    def test_manual_ir_confirm_then_start(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.prompts: list[int] = []
+                self.items: list[int] = []
+                self.answers: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset, limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_manual_inbox_review_prompt(self, chat_id: str, count: int) -> str:
+                del chat_id
+                self.prompts.append(count)
+                return "m1"
+
+            def send_inbox_review_item(self, chat_id: str, inbox_id: int, content: str) -> str:
+                del chat_id, content
+                self.items.append(inbox_id)
+                return "m2"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+            def clear_message_inline_keyboard(self, chat_id: str, message_id: int) -> None:
+                del chat_id, message_id
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id, text
+                return "m3"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "item-1"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "item-2"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/ir"}},
+                    {"update_id": 2, "callback_query": {"id": "c2", "data": "irms", "message": {"chat": {"id": 1001}, "message_id": 20}}},
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", db_path, "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("processed=2", out)
+            self.assertEqual(fake.prompts, [2])
+            self.assertEqual(fake.items, [1, 2])
+            self.assertTrue(any(a[0] == "c2" for a in fake.answers))
+
+    def test_manual_ir_cancel_does_not_change_daily_session(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.answers: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset, limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+            def clear_message_inline_keyboard(self, chat_id: str, message_id: int) -> None:
+                del chat_id, message_id
+
+            def send_manual_inbox_review_prompt(self, chat_id: str, count: int) -> str:
+                del chat_id, count
+                return "m1"
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id, text
+                return "m2"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", str(db_path), "--user", "xiaoyu", "capture", "item-1"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/ir"}},
+                    {"update_id": 2, "callback_query": {"id": "c2", "data": "irmc", "message": {"chat": {"id": 1001}, "message_id": 20}}},
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("processed=2", out)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS c FROM app_state WHERE key LIKE 'inbox_review_session:1:%'"
+                ).fetchone()
+                self.assertEqual(row["c"], 0)
 
 
 if __name__ == "__main__":

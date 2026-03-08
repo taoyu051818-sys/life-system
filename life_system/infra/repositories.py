@@ -8,6 +8,19 @@ class UserRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
 
+    def get_by_id(self, user_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT id, username, display_name, created_at, telegram_chat_id
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
     def get_by_username(self, username: str) -> dict[str, Any] | None:
         row = self.conn.execute(
             """
