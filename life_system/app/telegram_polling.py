@@ -17,6 +17,13 @@ _HELP_TEXT = (
     "/w 今天完成了什么\n"
     "/c energy=4 focus=3 mood=5 今天状态不错"
 )
+_FOCUS_BUTTON_TO_CMD = {
+    "1 很难专注": "/c focus=1",
+    "2 比较分散": "/c focus=2",
+    "3 一般": "/c focus=3",
+    "4 比较专注": "/c focus=4",
+    "5 高度专注": "/c focus=5",
+}
 _ACTION_VERBS = (
     "发",
     "回复",
@@ -177,6 +184,7 @@ def parse_callback_data(data: str) -> tuple[str, int] | None:
 
 def parse_journal_message(text: str) -> dict[str, Any]:
     stripped = text.strip()
+    stripped = _FOCUS_BUTTON_TO_CMD.get(stripped, stripped)
     if not stripped:
         return {"kind": "empty", "error": "未识别到可记录内容"}
 
@@ -230,6 +238,9 @@ def parse_journal_message(text: str) -> dict[str, Any]:
             idx += 1
 
         content = " ".join(tokens[idx:]).strip()
+        has_any_level = any(v is not None for v in levels.values())
+        if not content and has_any_level:
+            content = "状态签到"
         if not content:
             return {"kind": "empty", "error": "未识别到可记录内容"}
 
@@ -403,13 +414,13 @@ class TelegramPollingService:
         parsed = parse_journal_message(text)
         kind = parsed.get("kind")
         if kind == "help":
-            self._safe_send_message(chat_id, str(parsed.get("reply") or _HELP_TEXT))
+            self._safe_send_message(chat_id, str(parsed.get("reply") or _HELP_TEXT), with_keyboard=True)
             return {"handled": True, "reason": "help"}
         if kind == "ignore":
             return {"handled": False, "reason": "unsupported_command"}
 
         if kind in {"empty", "error"}:
-            self._safe_send_message(chat_id, str(parsed.get("error") or "未识别到可记录内容"))
+            self._safe_send_message(chat_id, str(parsed.get("error") or "未识别到可记录内容"), with_keyboard=True)
             return {"handled": False, "reason": "empty_payload" if kind == "empty" else "invalid_payload"}
 
         service = LifeSystemService(
@@ -447,7 +458,7 @@ class TelegramPollingService:
                 ok_text = "已记录，并已加入收件箱"
             except Exception:
                 inbox_failed = 1
-        self._safe_send_message(chat_id, ok_text)
+        self._safe_send_message(chat_id, ok_text, with_keyboard=True)
         return {"handled": True, "reason": "ok", "inbox_created": inbox_created, "inbox_failed": inbox_failed}
 
     def _extract_chat_id(self, cq: dict[str, Any]) -> str | None:
@@ -479,9 +490,12 @@ class TelegramPollingService:
             # Do not block business action or polling offset when answerCallbackQuery fails.
             pass
 
-    def _safe_send_message(self, chat_id: str, text: str) -> None:
+    def _safe_send_message(self, chat_id: str, text: str, with_keyboard: bool = False) -> None:
         try:
-            self.telegram_sender.send_message(chat_id, text)
+            if with_keyboard and hasattr(self.telegram_sender, "send_message_with_focus_keyboard"):
+                self.telegram_sender.send_message_with_focus_keyboard(chat_id, text)
+            else:
+                self.telegram_sender.send_message(chat_id, text)
         except Exception:
             # Journal capture should not rollback when reply fails.
             pass

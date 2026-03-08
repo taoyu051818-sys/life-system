@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import json
 import os
 import re
@@ -159,6 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     telegram_poll = telegram_sub.add_parser("poll", help="Poll Telegram updates (callbacks + private messages)")
     telegram_poll.add_argument("--limit", type=int, default=20)
     telegram_sub.add_parser("setup-menu", help="Setup Telegram command menu")
+    telegram_sub.add_parser("setup-keyboard", help="Push focus keyboard to configured private chats")
 
     return parser
 
@@ -212,6 +213,20 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                     print("telegram 菜单已设置：/r /w /c /help")
                 else:
                     print("telegram 命令菜单已设置；菜单按钮未设置成功")
+                return 0
+            if args.action == "setup-keyboard":
+                pushed = 0
+                failed = 0
+                for row in user_repo.list_all():
+                    chat_id = row.get("telegram_chat_id")
+                    if not chat_id:
+                        continue
+                    try:
+                        sender.setup_focus_keyboard(str(chat_id))
+                        pushed += 1
+                    except RuntimeError:
+                        failed += 1
+                print(f"telegram keyboard setup: pushed={pushed}, failed={failed}")
                 return 0
             poller = TelegramPollingService(conn, sender)
             try:
@@ -517,6 +532,16 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         return 0
 
     if entity == "inbox" and action == "triage":
+        triage_status = service.inbox_triage_status(args.inbox_id)
+        if triage_status == "not_found":
+            print("inbox item not found")
+            return 1
+        if triage_status == "already_archived":
+            print("inbox already archived")
+            return 0
+        if triage_status == "already_triaged":
+            print("inbox already triaged")
+            return 0
         if args.target == "task":
             task_id = service.triage_inbox_to_task(args.inbox_id)
             if task_id is None:
@@ -542,7 +567,10 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
                 print(f"warning: {warning}")
             return 0
         if status == "already_archived":
-            print("already archived")
+            print("inbox already archived")
+            return 0
+        if status == "already_triaged":
+            print("inbox already triaged")
             return 0
         print("inbox item not found")
         return 1
@@ -802,3 +830,6 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     parser = build_parser()
     parser.print_help()
     return 1
+
+
+

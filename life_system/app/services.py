@@ -91,6 +91,8 @@ class LifeSystemService:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return None
+        if not self._is_inbox_triage_allowed(item):
+            return None
         task_id = self.create_task(title=item["content"], inbox_item_id=inbox_item_id)
         if task_id is None:
             return None
@@ -109,6 +111,8 @@ class LifeSystemService:
     def triage_inbox_to_anki(self, inbox_item_id: int) -> int | None:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
+            return None
+        if not self._is_inbox_triage_allowed(item):
             return None
         draft_id = self.create_anki_draft(
             source_type="inbox",
@@ -135,6 +139,8 @@ class LifeSystemService:
             return "not_found"
         if item["status"] == "archived":
             return "already_archived"
+        if item.get("status") != "new" or item.get("triaged_at"):
+            return "already_triaged"
         updated = self.inbox_repo.mark_archived(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if not updated:
             return "not_found"
@@ -303,6 +309,16 @@ class LifeSystemService:
         out = self._nonfatal_warnings[:]
         self._nonfatal_warnings.clear()
         return out
+
+    def inbox_triage_status(self, inbox_item_id: int) -> str:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "archived":
+            return "already_archived"
+        if not self._is_inbox_triage_allowed(item):
+            return "already_triaged"
+        return "ok"
 
     def create_task(
         self,
@@ -774,6 +790,13 @@ class LifeSystemService:
         except Exception:
             self._nonfatal_warnings.append(f"triage_event_write_failed inbox_id={inbox_item_id} action={action}")
 
+    def _is_inbox_triage_allowed(self, item: dict[str, Any]) -> bool:
+        if item.get("status") != "new":
+            return False
+        if item.get("triaged_at"):
+            return False
+        return True
+
     def _create_feedback_signal(
         self,
         stats: dict[str, int],
@@ -825,7 +848,8 @@ class InboxReviewService:
         return self._run(now=now, send=True)
 
     def _run(self, now: str | None, send: bool) -> dict[str, Any]:
-        now_dt = datetime.fromisoformat((now or now_utc_iso()).replace("Z", "+00:00"))
+        now_iso = now or now_utc_iso()
+        now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
         now_cst = now_dt.astimezone(CST)
         day_cst = now_cst.date().isoformat()
         window_reached = (now_cst.hour, now_cst.minute) >= (self.REVIEW_WINDOW_HOUR, self.REVIEW_WINDOW_MINUTE)
@@ -892,7 +916,7 @@ class InboxReviewService:
 
             if delivered:
                 stats["sent"] += 1
-                self.state_repo.set(sent_key, now_utc_iso(), now_utc_iso())
+                self.state_repo.set(sent_key, now_iso, now_iso)
 
         return stats
 

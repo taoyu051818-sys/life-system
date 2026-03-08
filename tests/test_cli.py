@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from life_system.cli.commands import run_cli
 from life_system.app.telegram_polling import parse_callback_data, parse_journal_message
 from life_system.infra.db import connection_ctx
+from life_system.infra.telegram_sender import TelegramReminderSender
 
 
 def run_with_output(args: list[str]) -> tuple[int, str]:
@@ -20,6 +22,25 @@ def run_with_output(args: list[str]) -> tuple[int, str]:
 
 
 class TestCliFlows(unittest.TestCase):
+    def test_telegram_sender_focus_keyboard_markup(self) -> None:
+        sender = TelegramReminderSender("dummy")
+        calls: list[tuple[str, dict]] = []
+
+        def fake_post(method: str, params: dict) -> dict:
+            calls.append((method, params))
+            return {"ok": True, "result": {"message_id": 1}}
+
+        with patch.object(sender, "_post", side_effect=fake_post):
+            sender.send_message_with_focus_keyboard("1001", "状态")
+        self.assertEqual(calls[0][0], "sendMessage")
+        self.assertIn("reply_markup", calls[0][1])
+        markup = json.loads(calls[0][1]["reply_markup"])
+        buttons = [row[0]["text"] for row in markup["keyboard"]]
+        self.assertEqual(
+            buttons,
+            ["1 很难专注", "2 比较分散", "3 一般", "4 比较专注", "5 高度专注"],
+        )
+
     def test_telegram_callback_parsing(self) -> None:
         self.assertEqual(parse_callback_data("ra:12"), ("ra", 12))
         self.assertEqual(parse_callback_data("rz:99"), ("rz", 99))
@@ -32,6 +53,14 @@ class TestCliFlows(unittest.TestCase):
         self.assertEqual(parse_journal_message("/r 今天启动很难")["entry_type"], "reflection")
         self.assertEqual(parse_journal_message("/w 今天有进展")["entry_type"], "win")
         self.assertEqual(parse_journal_message("/help")["kind"], "help")
+        focus_only = parse_journal_message("/c focus=4")
+        self.assertEqual(focus_only["entry_type"], "checkin")
+        self.assertEqual(focus_only["focus_level"], 4)
+        self.assertEqual(focus_only["content"], "状态签到")
+        btn = parse_journal_message("4 比较专注")
+        self.assertEqual(btn["entry_type"], "checkin")
+        self.assertEqual(btn["focus_level"], 4)
+        self.assertEqual(btn["content"], "状态签到")
         parsed = parse_journal_message("/c energy=2 focus=3 mood=4 今天状态一般")
         self.assertEqual(parsed["entry_type"], "checkin")
         self.assertEqual(parsed["energy_level"], 2)
@@ -384,7 +413,7 @@ class TestCliFlows(unittest.TestCase):
             rc2, out2 = run_with_output(["--db", db_path, "inbox", "triage", "1", "archive"])
             self.assertEqual(rc1, 0)
             self.assertEqual(rc2, 0)
-            self.assertIn("already archived", out2)
+            self.assertIn("inbox already archived", out2)
 
             run_with_output(["--db", db_path, "task", "create", "repeat reminder"])
             run_with_output(["--db", db_path, "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
@@ -515,6 +544,44 @@ class TestCliFlows(unittest.TestCase):
                 row = conn.execute("SELECT status FROM inbox_items WHERE id = 1").fetchone()
                 self.assertEqual(row["status"], "archived")
 
+    def test_duplicate_triage_rejected_after_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "capture", "dup triage"])
+            rc1, _ = run_with_output(["--db", str(db_path), "inbox", "triage", "1", "task"])
+            rc2, out2 = run_with_output(["--db", str(db_path), "inbox", "triage", "1", "task"])
+            rc3, out3 = run_with_output(["--db", str(db_path), "inbox", "triage", "1", "anki"])
+            rc4, out4 = run_with_output(["--db", str(db_path), "inbox", "triage", "1", "archive"])
+            self.assertEqual(rc1, 0)
+            self.assertEqual(rc2, 0)
+            self.assertEqual(rc3, 0)
+            self.assertEqual(rc4, 0)
+            self.assertIn("inbox already triaged", out2)
+            self.assertIn("inbox already triaged", out3)
+            self.assertIn("inbox already triaged", out4)
+            with connection_ctx(db_path) as conn:
+                t = conn.execute("SELECT COUNT(*) AS c FROM tasks WHERE user_id=1").fetchone()
+                a = conn.execute("SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id=1").fetchone()
+                e = conn.execute("SELECT COUNT(*) AS c FROM triage_events WHERE user_id=1").fetchone()
+                self.assertEqual(t["c"], 1)
+                self.assertEqual(a["c"], 0)
+                self.assertEqual(e["c"], 1)
+
+    def test_duplicate_triage_rejected_after_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "capture", "dup archive"])
+            rc1, _ = run_with_output(["--db", str(db_path), "inbox", "triage", "1", "archive"])
+            rc2, out2 = run_with_output(["--db", str(db_path), "inbox", "triage", "1", "task"])
+            self.assertEqual(rc1, 0)
+            self.assertEqual(rc2, 0)
+            self.assertIn("inbox already archived", out2)
+            with connection_ctx(db_path) as conn:
+                t = conn.execute("SELECT COUNT(*) AS c FROM tasks WHERE user_id=1").fetchone()
+                e = conn.execute("SELECT COUNT(*) AS c FROM triage_events WHERE user_id=1").fetchone()
+                self.assertEqual(t["c"], 0)
+                self.assertEqual(e["c"], 1)
+
     def test_feedback_migration_table_exists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "life.db"
@@ -559,6 +626,41 @@ class TestCliFlows(unittest.TestCase):
             self.assertEqual(rc2, 0)
             self.assertIn("created_signals=1", out1)
             self.assertIn("skipped_existing=1", out2)
+
+    def test_feedback_scan_uses_now_for_signal_created_at(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id
+                del text
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}}])
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", str(db_path), "telegram", "poll"])
+            run_with_output(["--db", str(db_path), "inbox", "triage", "1", "task"])
+            run_with_output(["--db", str(db_path), "inbox", "feedback-scan", "--now", "2026-03-08T12:30:00+00:00"])
+            with connection_ctx(db_path) as conn:
+                row = conn.execute(
+                    "SELECT created_at FROM inbox_feedback_signals WHERE user_id=1 ORDER BY id DESC LIMIT 1"
+                ).fetchone()
+                self.assertEqual(row["created_at"], "2026-03-08T12:30:00+00:00")
 
     def test_feedback_auto_to_task_anki_archive_24h(self) -> None:
         class FakeSender:
@@ -1234,6 +1336,55 @@ class TestCliFlows(unittest.TestCase):
                 inbox_count = conn.execute("SELECT COUNT(*) AS c FROM inbox_items WHERE user_id=1").fetchone()
                 self.assertEqual(inbox_count["c"], 0)
 
+    def test_telegram_focus_buttons_write_checkin_with_default_content(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message_with_focus_keyboard(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            updates = []
+            labels = ["1 很难专注", "2 比较分散", "3 一般", "4 比较专注", "5 高度专注"]
+            for i, label in enumerate(labels, start=1):
+                updates.append({"update_id": i, "message": {"chat": {"id": 1001, "type": "private"}, "text": label}})
+            fake = FakeSender(updates)
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("messages=5", out)
+            with connection_ctx(db_path) as conn:
+                rows = conn.execute(
+                    "SELECT entry_type, content, focus_level, energy_level, mood_level FROM journal_entries ORDER BY id ASC"
+                ).fetchall()
+                self.assertEqual(len(rows), 5)
+                for idx, row in enumerate(rows, start=1):
+                    self.assertEqual(row["entry_type"], "checkin")
+                    self.assertEqual(row["content"], "状态签到")
+                    self.assertEqual(row["focus_level"], idx)
+                    self.assertIsNone(row["energy_level"])
+                    self.assertIsNone(row["mood_level"])
+
     def test_telegram_poll_invalid_checkin_values_and_empty_payload(self) -> None:
         class FakeSender:
             def __init__(self, updates: list[dict]):
@@ -1445,6 +1596,26 @@ class TestCliFlows(unittest.TestCase):
                     rc, out = run_with_output(["--db", db_path, "telegram", "setup-menu"])
             self.assertEqual(rc, 0)
             self.assertIn("/r /w /c /help", out)
+
+    def test_telegram_setup_keyboard_command(self) -> None:
+        class FakeSender:
+            def __init__(self):
+                self.chat_ids: list[str] = []
+
+            def setup_focus_keyboard(self, chat_id: str) -> None:
+                self.chat_ids.append(chat_id)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", db_path, "user", "set-telegram", "partner", "2002"])
+            fake = FakeSender()
+            with patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "TOKEN"}):
+                with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                    rc, out = run_with_output(["--db", db_path, "telegram", "setup-keyboard"])
+            self.assertEqual(rc, 0)
+            self.assertIn("pushed=2", out)
+            self.assertEqual(sorted(fake.chat_ids), ["1001", "2002"])
 
     def test_telegram_help_reply(self) -> None:
         class FakeSender:
@@ -1681,6 +1852,26 @@ class TestCliFlows(unittest.TestCase):
             self.assertIn("escalated=0", out1)
             self.assertIn("skipped_already_sent=1", out2)
             self.assertEqual(len(fake.sent), 1)
+
+    def test_inbox_review_send_uses_now_for_app_state_timestamp(self) -> None:
+        class FakeSender:
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id
+                del text
+                return "m1"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", str(db_path), "--user", "xiaoyu", "capture", "pending"])
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=FakeSender()):
+                run_with_output(["--db", str(db_path), "inbox", "review-send", "--now", "2026-03-08T12:30:00+00:00"])
+            with connection_ctx(db_path) as conn:
+                row = conn.execute(
+                    "SELECT updated_at, value FROM app_state WHERE key='inbox_review_sent:1:2026-03-08'"
+                ).fetchone()
+                self.assertEqual(row["updated_at"], "2026-03-08T12:30:00+00:00")
+                self.assertEqual(row["value"], "2026-03-08T12:30:00+00:00")
 
     def test_inbox_review_escalated_by_count(self) -> None:
         class FakeSender:

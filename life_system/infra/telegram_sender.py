@@ -14,6 +14,31 @@ class TelegramReminderSender:
         result = payload.get("result", {})
         return str(result.get("message_id", ""))
 
+    def send_message_with_focus_keyboard(self, chat_id: str, text: str) -> str:
+        keyboard = {
+            "keyboard": [
+                [{"text": "1 很难专注"}],
+                [{"text": "2 比较分散"}],
+                [{"text": "3 一般"}],
+                [{"text": "4 比较专注"}],
+                [{"text": "5 高度专注"}],
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": False,
+            "selective": False,
+        }
+        payload = self._post(
+            "sendMessage",
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "disable_web_page_preview": "true",
+                "reply_markup": json.dumps(keyboard, ensure_ascii=False),
+            },
+        )
+        result = payload.get("result", {})
+        return str(result.get("message_id", ""))
+
     def send_reminder(self, chat_id: str, text: str, reminder_id: int) -> str:
         keyboard = {
             "inline_keyboard": [
@@ -64,6 +89,9 @@ class TelegramReminderSender:
         except RuntimeError:
             menu_button_ok = False
         return {"commands": True, "menu_button": menu_button_ok}
+
+    def setup_focus_keyboard(self, chat_id: str) -> None:
+        self.send_message_with_focus_keyboard(chat_id, "已设置专注状态键盘，可直接点按钮记录状态。")
 
     def _post(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         url = f"{self._base}/{method}"
