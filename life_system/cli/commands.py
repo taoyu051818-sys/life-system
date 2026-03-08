@@ -63,6 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
     inbox_review_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     inbox_review_send = inbox_sub.add_parser("review-send", help="Send inbox review reminders")
     inbox_review_send.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    inbox_feedback_scan = inbox_sub.add_parser("feedback-scan", help="Scan feedback signals for inbox outcomes")
+    inbox_feedback_scan.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    inbox_feedback_report = inbox_sub.add_parser("feedback-report", help="Show recent inbox feedback signals")
+    inbox_feedback_report.add_argument("--limit", type=int, default=50)
 
     task = subparsers.add_parser("task")
     task_sub = task.add_subparsers(dest="action", required=True)
@@ -562,6 +566,28 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             print(
                 f"[{row['id']}] inbox={row['inbox_item_id']} | {row['created_at']} | action={row['action']} | "
                 f"target={row['target_type']}:{row['target_id']} | by={row['created_by']} | "
+                f"rule={_fmt_optional(row['source_rule_name'])}/{_fmt_optional(row['source_rule_version'])}"
+            )
+        return 0
+
+    if entity == "inbox" and action == "feedback-scan":
+        stats = service.feedback_scan(now=args.now)
+        print(
+            "inbox feedback scan: "
+            f"scanned_auto_inbox={stats['scanned_auto_inbox']}, "
+            f"scanned_review_sends={stats['scanned_review_sends']}, "
+            f"created_signals={stats['created_signals']}, "
+            f"skipped_existing={stats['skipped_existing']}, "
+            f"failed={stats['failed']}"
+        )
+        return 0
+
+    if entity == "inbox" and action == "feedback-report":
+        rows = service.feedback_report(limit=args.limit)
+        for row in rows:
+            print(
+                f"[{row['id']}] {row['created_at']} | "
+                f"subject={row['subject_type']}:{row['subject_key']} | signal={row['signal_type']} | "
                 f"rule={_fmt_optional(row['source_rule_name'])}/{_fmt_optional(row['source_rule_version'])}"
             )
         return 0

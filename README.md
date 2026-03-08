@@ -211,6 +211,20 @@ Polling output includes:
   - `python -m life_system.main inbox triage-history --limit 50`
 - If event logging fails, main triage action still succeeds and CLI prints a warning.
 
+## Inbox Feedback Signals
+
+- Commands:
+  - `python -m life_system.main --user xiaoyu inbox feedback-scan --now 2026-03-08T12:30:00+00:00`
+  - `python -m life_system.main --user xiaoyu inbox feedback-report --limit 50`
+- `feedback-scan` only scans current `--user` data and writes idempotent signals.
+- Current signal types:
+  - `auto_to_task_24h`
+  - `auto_to_anki_24h`
+  - `auto_to_archive_24h`
+  - `auto_pending_72h`
+  - `review_led_to_triage_24h`
+  - `review_no_triage_24h`
+
 ## Abandonment Reason Presets
 
 - overwhelm

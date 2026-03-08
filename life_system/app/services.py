@@ -11,6 +11,7 @@ from life_system.infra.repositories import (
     AbandonmentLogRepository,
     AnkiDraftRepository,
     AppStateRepository,
+    InboxFeedbackSignalRepository,
     InboxRepository,
     JournalRepository,
     ReminderEventRepository,
@@ -46,6 +47,8 @@ class LifeSystemService:
         self.anki_repo = AnkiDraftRepository(conn)
         self.journal_repo = JournalRepository(conn)
         self.triage_event_repo = TriageEventRepository(conn)
+        self.feedback_repo = InboxFeedbackSignalRepository(conn)
+        self.state_repo = AppStateRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
         self._nonfatal_warnings: list[str] = []
 
@@ -155,6 +158,146 @@ class LifeSystemService:
 
     def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
+
+    def feedback_scan(self, now: str | None = None) -> dict[str, int]:
+        now_iso = now or now_utc_iso()
+        now_dt = self._parse_iso(now_iso)
+        stats = {
+            "scanned_auto_inbox": 0,
+            "scanned_review_sends": 0,
+            "created_signals": 0,
+            "skipped_existing": 0,
+            "failed": 0,
+        }
+
+        auto_items = self.inbox_repo.list_auto_created(user_id=self.user_id)
+        for item in auto_items:
+            stats["scanned_auto_inbox"] += 1
+            subject_key = f"inbox:{item['id']}"
+            try:
+                first = self.triage_event_repo.first_for_inbox(user_id=self.user_id, inbox_item_id=int(item["id"]))
+                created_dt = self._parse_iso(str(item["created_at"]))
+                within_24_end = created_dt + timedelta(hours=24)
+                if first:
+                    triage_dt = self._parse_iso(str(first["created_at"]))
+                    if triage_dt <= within_24_end:
+                        target_type = str(first.get("target_type") or "")
+                        action = str(first.get("action") or "")
+                        signal_type = None
+                        if target_type == "task" or action == "to_task":
+                            signal_type = "auto_to_task_24h"
+                        elif target_type == "anki" or action == "to_anki":
+                            signal_type = "auto_to_anki_24h"
+                        elif target_type == "archive" or action == "to_archive":
+                            signal_type = "auto_to_archive_24h"
+                        if signal_type:
+                            delay_hours = max(0, int((triage_dt - created_dt).total_seconds() // 3600))
+                            payload = json.dumps(
+                                {
+                                    "inbox_item_id": item["id"],
+                                    "first_triage_event_id": first["id"],
+                                    "first_target_type": first.get("target_type"),
+                                    "first_target_id": first.get("target_id"),
+                                    "delay_hours": delay_hours,
+                                },
+                                ensure_ascii=True,
+                            )
+                            self._create_feedback_signal(
+                                stats=stats,
+                                subject_type="auto_inbox",
+                                subject_key=subject_key,
+                                signal_type=signal_type,
+                                window_hours=24,
+                                source_rule_name=item.get("rule_name"),
+                                source_rule_version=item.get("rule_version"),
+                                payload=payload,
+                                created_at=now_iso,
+                            )
+                else:
+                    if str(item.get("status")) == "new" and now_dt >= (created_dt + timedelta(hours=72)):
+                        payload = json.dumps(
+                            {
+                                "inbox_item_id": item["id"],
+                                "note": "still pending after 72h",
+                            },
+                            ensure_ascii=True,
+                        )
+                        self._create_feedback_signal(
+                            stats=stats,
+                            subject_type="auto_inbox",
+                            subject_key=subject_key,
+                            signal_type="auto_pending_72h",
+                            window_hours=72,
+                            source_rule_name=item.get("rule_name"),
+                            source_rule_version=item.get("rule_version"),
+                            payload=payload,
+                            created_at=now_iso,
+                        )
+            except Exception:
+                stats["failed"] += 1
+                continue
+
+        review_rows = self.state_repo.list_prefix(f"inbox_review_sent:{self.user_id}:")
+        for row in review_rows:
+            stats["scanned_review_sends"] += 1
+            key = str(row["key"])
+            try:
+                sent_at = self._parse_iso(str(row["updated_at"]))
+                end_at = sent_at + timedelta(hours=24)
+                first_triage = self.triage_event_repo.first_in_window(
+                    user_id=self.user_id,
+                    start_at=self._to_iso(sent_at),
+                    end_at=self._to_iso(end_at),
+                )
+                if first_triage:
+                    delay_hours = max(0, int((self._parse_iso(str(first_triage["created_at"])) - sent_at).total_seconds() // 3600))
+                    payload = json.dumps(
+                        {
+                            "review_sent_at": self._to_iso(sent_at),
+                            "triage_happened_at": first_triage["created_at"],
+                            "delay_hours": delay_hours,
+                            "first_triage_event_id": first_triage["id"],
+                        },
+                        ensure_ascii=True,
+                    )
+                    self._create_feedback_signal(
+                        stats=stats,
+                        subject_type="inbox_review",
+                        subject_key=key,
+                        signal_type="review_led_to_triage_24h",
+                        window_hours=24,
+                        source_rule_name=None,
+                        source_rule_version=None,
+                        payload=payload,
+                        created_at=now_iso,
+                    )
+                elif now_dt >= end_at:
+                    payload = json.dumps(
+                        {
+                            "review_sent_at": self._to_iso(sent_at),
+                            "note": "no triage in 24h",
+                        },
+                        ensure_ascii=True,
+                    )
+                    self._create_feedback_signal(
+                        stats=stats,
+                        subject_type="inbox_review",
+                        subject_key=key,
+                        signal_type="review_no_triage_24h",
+                        window_hours=24,
+                        source_rule_name=None,
+                        source_rule_version=None,
+                        payload=payload,
+                        created_at=now_iso,
+                    )
+            except Exception:
+                stats["failed"] += 1
+                continue
+
+        return stats
+
+    def feedback_report(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.feedback_repo.list_recent(user_id=self.user_id, limit=limit)
 
     def pop_nonfatal_warnings(self) -> list[str]:
         out = self._nonfatal_warnings[:]
@@ -630,6 +773,38 @@ class LifeSystemService:
             )
         except Exception:
             self._nonfatal_warnings.append(f"triage_event_write_failed inbox_id={inbox_item_id} action={action}")
+
+    def _create_feedback_signal(
+        self,
+        stats: dict[str, int],
+        subject_type: str,
+        subject_key: str,
+        signal_type: str,
+        window_hours: int | None,
+        source_rule_name: str | None,
+        source_rule_version: str | None,
+        payload: str | None,
+        created_at: str,
+    ) -> None:
+        try:
+            created = self.feedback_repo.create_if_absent(
+                user_id=self.user_id,
+                subject_type=subject_type,
+                subject_key=subject_key,
+                signal_type=signal_type,
+                window_hours=window_hours,
+                created_at=created_at,
+                source_rule_name=source_rule_name,
+                source_rule_version=source_rule_version,
+                payload=payload,
+            )
+        except Exception:
+            stats["failed"] += 1
+            return
+        if created:
+            stats["created_signals"] += 1
+        else:
+            stats["skipped_existing"] += 1
 
 
 class InboxReviewService:

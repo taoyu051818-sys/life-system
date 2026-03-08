@@ -272,6 +272,21 @@ class InboxRepository:
             return None
         return str(row["created_at"])
 
+    def list_auto_created(self, user_id: int, limit: int = 10000) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, user_id, content, source, status, created_at,
+              source_journal_entry_id, created_by, rule_name, rule_version
+            FROM inbox_items
+            WHERE user_id = ? AND created_by = 'telegram_auto'
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
 
 class TaskRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -996,6 +1011,18 @@ class AppStateRepository:
         )
         self.conn.commit()
 
+    def list_prefix(self, key_prefix: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT key, value, updated_at
+            FROM app_state
+            WHERE key LIKE ?
+            ORDER BY key ASC
+            """,
+            (f"{key_prefix}%",),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
 
 class TriageEventRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -1061,6 +1088,98 @@ class TriageEventRepository:
             FROM triage_events
             WHERE user_id = ?
             ORDER BY id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def first_for_inbox(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, inbox_item_id, action, target_type, target_id,
+              created_at, created_by, source_rule_name, source_rule_version, payload
+            FROM triage_events
+            WHERE user_id = ? AND inbox_item_id = ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            (user_id, inbox_item_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def first_in_window(self, user_id: int, start_at: str, end_at: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, inbox_item_id, action, target_type, target_id,
+              created_at, created_by, source_rule_name, source_rule_version, payload
+            FROM triage_events
+            WHERE user_id = ? AND created_at >= ? AND created_at <= ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            (user_id, start_at, end_at),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+
+class InboxFeedbackSignalRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create_if_absent(
+        self,
+        user_id: int,
+        subject_type: str,
+        subject_key: str,
+        signal_type: str,
+        window_hours: int | None,
+        created_at: str,
+        source_rule_name: str | None,
+        source_rule_version: str | None,
+        payload: str | None,
+    ) -> bool:
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO inbox_feedback_signals(
+                  user_id, subject_type, subject_key, signal_type, window_hours, created_at,
+                  source_rule_name, source_rule_version, payload
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    user_id,
+                    subject_type,
+                    subject_key,
+                    signal_type,
+                    window_hours,
+                    created_at,
+                    source_rule_name,
+                    source_rule_version,
+                    payload,
+                ),
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def list_recent(self, user_id: int, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, user_id, subject_type, subject_key, signal_type, window_hours,
+              created_at, source_rule_name, source_rule_version, payload
+            FROM inbox_feedback_signals
+            WHERE user_id = ?
+            ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
             (user_id, limit),

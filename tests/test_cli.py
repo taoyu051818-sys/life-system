@@ -515,6 +515,196 @@ class TestCliFlows(unittest.TestCase):
                 row = conn.execute("SELECT status FROM inbox_items WHERE id = 1").fetchone()
                 self.assertEqual(row["status"], "archived")
 
+    def test_feedback_migration_table_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "init-db"])
+            with connection_ctx(db_path) as conn:
+                row = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='inbox_feedback_signals'"
+                ).fetchone()
+                self.assertIsNotNone(row)
+
+    def test_feedback_scan_idempotent_unique(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id
+                del text
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}}])
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", db_path, "telegram", "poll"])
+            run_with_output(["--db", db_path, "inbox", "triage", "1", "task"])
+            rc1, out1 = run_with_output(["--db", db_path, "inbox", "feedback-scan", "--now", "2026-03-08T12:30:00+00:00"])
+            rc2, out2 = run_with_output(["--db", db_path, "inbox", "feedback-scan", "--now", "2026-03-08T12:31:00+00:00"])
+            self.assertEqual(rc1, 0)
+            self.assertEqual(rc2, 0)
+            self.assertIn("created_signals=1", out1)
+            self.assertIn("skipped_existing=1", out2)
+
+    def test_feedback_auto_to_task_anki_archive_24h(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id
+                del text
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}},
+                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "明天联系房东"}},
+                    {"update_id": 3, "message": {"chat": {"id": 1001, "type": "private"}, "text": "待办：改完PPT"}},
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", str(db), "telegram", "poll"])
+            run_with_output(["--db", str(db), "inbox", "triage", "1", "task"])
+            run_with_output(["--db", str(db), "inbox", "triage", "2", "anki"])
+            run_with_output(["--db", str(db), "inbox", "triage", "3", "archive"])
+            run_with_output(["--db", str(db), "inbox", "feedback-scan", "--now", "2026-03-08T12:30:00+00:00"])
+            with connection_ctx(db) as conn:
+                sigs = conn.execute(
+                    "SELECT signal_type FROM inbox_feedback_signals WHERE user_id=1 ORDER BY id ASC"
+                ).fetchall()
+                types = [row["signal_type"] for row in sigs]
+                self.assertIn("auto_to_task_24h", types)
+                self.assertIn("auto_to_anki_24h", types)
+                self.assertIn("auto_to_archive_24h", types)
+
+    def test_feedback_auto_pending_72h_and_manual_excluded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db), "init-db"])
+            with connection_ctx(db) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbox_items(
+                      user_id, content, source, status, created_at, created_by, rule_name, rule_version
+                    ) VALUES(1, 'auto old', 'telegram_auto', 'new', '2026-03-05T00:00:00+00:00', 'telegram_auto', 'todo_prefix', 'inbox_v1')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO inbox_items(
+                      user_id, content, source, status, created_at, created_by
+                    ) VALUES(1, 'manual old', 'cli', 'new', '2026-03-05T00:00:00+00:00', 'manual')
+                    """
+                )
+                conn.commit()
+            run_with_output(["--db", str(db), "inbox", "feedback-scan", "--now", "2026-03-08T12:30:00+00:00"])
+            with connection_ctx(db) as conn:
+                rows = conn.execute(
+                    "SELECT subject_key, signal_type FROM inbox_feedback_signals WHERE user_id=1 ORDER BY id ASC"
+                ).fetchall()
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["signal_type"], "auto_pending_72h")
+                self.assertTrue(rows[0]["subject_key"].startswith("inbox:"))
+
+    def test_feedback_review_led_and_no_triage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db), "init-db"])
+            with connection_ctx(db) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbox_items(user_id, content, source, status, created_at, created_by)
+                    VALUES(1, 'seed inbox', 'cli', 'new', '2026-03-07T12:00:00+00:00', 'manual')
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO app_state(key, value, updated_at) VALUES(?, ?, ?)",
+                    ("inbox_review_sent:1:2026-03-07", "x", "2026-03-07T12:00:00+00:00"),
+                )
+                conn.execute(
+                    "INSERT INTO app_state(key, value, updated_at) VALUES(?, ?, ?)",
+                    ("inbox_review_sent:1:2026-03-08", "x", "2026-03-08T12:00:00+00:00"),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO triage_events(
+                      user_id, inbox_item_id, action, target_type, target_id, created_at, created_by
+                    ) VALUES(1, 1, 'to_task', 'task', 99, '2026-03-07T13:00:00+00:00', 'manual')
+                    """
+                )
+                conn.commit()
+            run_with_output(["--db", str(db), "inbox", "feedback-scan", "--now", "2026-03-09T13:00:00+00:00"])
+            with connection_ctx(db) as conn:
+                rows = conn.execute(
+                    """
+                    SELECT subject_key, signal_type
+                    FROM inbox_feedback_signals
+                    WHERE user_id=1 AND subject_type='inbox_review'
+                    ORDER BY subject_key ASC
+                    """
+                ).fetchall()
+                mapping = {row["subject_key"]: row["signal_type"] for row in rows}
+                self.assertEqual(mapping["inbox_review_sent:1:2026-03-07"], "review_led_to_triage_24h")
+                self.assertEqual(mapping["inbox_review_sent:1:2026-03-08"], "review_no_triage_24h")
+
+    def test_feedback_report_user_isolation_and_rule_passthrough(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db), "init-db"])
+            with connection_ctx(db) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO inbox_feedback_signals(
+                      user_id, subject_type, subject_key, signal_type, window_hours, created_at, source_rule_name, source_rule_version
+                    ) VALUES(1, 'auto_inbox', 'inbox:1', 'auto_to_task_24h', 24, '2026-03-08T00:00:00+00:00', 'explicit_remember', 'inbox_v1')
+                    """
+                )
+                conn.execute(
+                    """
+                    INSERT INTO inbox_feedback_signals(
+                      user_id, subject_type, subject_key, signal_type, window_hours, created_at
+                    ) VALUES(2, 'auto_inbox', 'inbox:2', 'auto_to_task_24h', 24, '2026-03-08T00:00:00+00:00')
+                    """
+                )
+                conn.commit()
+            rc1, out1 = run_with_output(["--db", str(db), "--user", "xiaoyu", "inbox", "feedback-report", "--limit", "50"])
+            rc2, out2 = run_with_output(["--db", str(db), "--user", "partner", "inbox", "feedback-report", "--limit", "50"])
+            self.assertEqual(rc1, 0)
+            self.assertEqual(rc2, 0)
+            self.assertIn("subject=auto_inbox:inbox:1", out1)
+            self.assertIn("rule=explicit_remember/inbox_v1", out1)
+            self.assertNotIn("subject=auto_inbox:inbox:2", out1)
+            self.assertIn("subject=auto_inbox:inbox:2", out2)
+
     def test_journal_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
