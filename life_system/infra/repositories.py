@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import sqlite3
 from typing import Any
@@ -149,7 +149,7 @@ class InboxRepository:
         if status:
             rows = self.conn.execute(
                 """
-                SELECT id, content, source, status, created_at
+                SELECT id, content, source, status, created_at, created_by, rule_name
                 FROM inbox_items
                 WHERE user_id = ? AND status = ?
                 ORDER BY id DESC
@@ -161,7 +161,7 @@ class InboxRepository:
             if include_archived:
                 rows = self.conn.execute(
                     """
-                    SELECT id, content, source, status, created_at
+                    SELECT id, content, source, status, created_at, created_by, rule_name
                     FROM inbox_items
                     WHERE user_id = ?
                     ORDER BY id DESC
@@ -172,7 +172,7 @@ class InboxRepository:
             else:
                 rows = self.conn.execute(
                     """
-                    SELECT id, content, source, status, created_at
+                    SELECT id, content, source, status, created_at, created_by, rule_name
                     FROM inbox_items
                     WHERE user_id = ? AND status != 'archived'
                     ORDER BY id DESC
@@ -559,6 +559,35 @@ class ReminderRepository:
         if row is None:
             return None
         return dict(row)
+
+
+    def list_for_user(self, user_id: int, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              r.id, r.task_id, r.remind_at, r.channel, r.status, r.created_at,
+              r.requires_ack, r.ack_at, r.last_attempt_at, r.attempt_count,
+              r.next_retry_at, r.max_attempts, r.escalation_level, r.acked_via,
+              r.skip_reason, r.message_ref,
+              t.title AS task_title,
+              e.event_type AS last_event_type,
+              e.event_at AS last_event_at
+            FROM reminders r
+            JOIN tasks t ON t.id = r.task_id
+            LEFT JOIN reminder_events e ON e.id = (
+              SELECT re.id
+              FROM reminder_events re
+              WHERE re.user_id = ? AND re.reminder_id = r.id
+              ORDER BY re.event_at DESC, re.id DESC
+              LIMIT 1
+            )
+            WHERE t.user_id = ?
+            ORDER BY r.remind_at DESC, r.id DESC
+            LIMIT ?
+            """,
+            (user_id, user_id, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     def update_delivery(
         self,
@@ -1213,3 +1242,6 @@ class InboxFeedbackSignalRepository:
             (user_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+

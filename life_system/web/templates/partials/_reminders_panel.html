@@ -1,0 +1,33 @@
+﻿<div id="reminders-panel">
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>content/object</th><th>status</th><th>remind_at(北京)</th><th>last event</th><th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in reminders %}
+        <tr>
+          <td>{{ r.id }}</td>
+          <td>{{ r.task_title }} (task={{ r.task_id }})</td>
+          <td>{{ r.status }}</td>
+          <td>{{ r.remind_at | bj_time }}</td>
+          <td>{{ r.last_event_type or '-' }} / {{ r.last_event_at | bj_time }}</td>
+          <td>
+            <button class="btn small" hx-post="/reminders/{{ r.id }}/ack" hx-target="#reminders-panel" hx-swap="outerHTML">ack</button>
+            <form class="inline-form" hx-post="/reminders/{{ r.id }}/snooze" hx-target="#reminders-panel" hx-swap="outerHTML">
+              <input name="remind_at" placeholder="2026-03-08T09:00:00+08:00" />
+              <button class="btn small secondary" type="submit">snooze</button>
+            </form>
+            <button class="btn small ghost" hx-post="/reminders/{{ r.id }}/skip" hx-target="#reminders-panel" hx-swap="outerHTML">skip</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="muted">no reminders</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

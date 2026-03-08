@@ -1,0 +1,9 @@
+﻿{% extends "base.html" %}
+{% block title %}Inbox Review | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Inbox Review</h1>
+  <p class="muted">默认仅展示 status=new。按钮动作复用现有 service 逻辑。</p>
+  {% include "partials/_inbox_panel.html" %}
+</section>
+{% endblock %}

@@ -343,3 +343,63 @@ sudo journalctl -u life-summary.service -n 100 --no-pager
 For systemd asset details, see:
 - `deploy/systemd/README.md`
 
+
+## PC Web UI (Phase 0 + Phase 1)
+
+Minimal stack: FastAPI + Jinja2 templates + htmx.
+Web layer is a thin adapter and reuses existing service/repository logic.
+
+Run locally:
+- `python -m life_system.web`
+- or `uvicorn life_system.web.app:create_app --factory --host 0.0.0.0 --port 8080`
+
+Optional env:
+- `LIFE_SYSTEM_DB=/abs/path/to/life_system.db`
+- `LIFE_WEB_HOST=0.0.0.0`
+- `LIFE_WEB_PORT=8080`
+
+Available pages:
+- `GET /`
+- `GET /health`
+- `GET /inbox?user=xiaoyu`
+
+Inbox actions (htmx partial refresh):
+- `POST /inbox/{id}/to-task`
+- `POST /inbox/{id}/archive`
+- `GET /inbox/{id}/history`
+
+## Web Login + Quick Journal (Phase 2)
+
+Environment variables:
+- `LIFE_WEB_PASSWORD` (required)
+- `LIFE_WEB_SESSION_SECRET` (recommended)
+- `LIFE_WEB_DEFAULT_USER` (default: `xiaoyu`)
+- `LIFE_SYSTEM_DB` (optional, default `data/life_system.db`)
+
+Behavior:
+- Unauthenticated access to `/` and `/inbox` redirects to `/login`.
+- Login is password-only with optional "remember this device".
+- Session cookie is used (thin web auth only, not a public internet auth system).
+- Inbox page adds `keep` action (`POST /inbox/{id}/keep`) with Telegram-consistent semantics:
+  no status change, no triage event write.
+- Home page includes Quick Journal:
+  - activity / reflection / win text input
+  - focus 1-5 quick checkin (`checkin` + content=`状态签到`)
+
+## Web Tasks + Reminders (Phase 3)
+
+New pages:
+- `GET /tasks`
+- `GET /reminders`
+
+Tasks page:
+- list fields: id/title/status/created_at/due_at/snooze_until
+- actions: detail / done / snooze
+- actions reuse `LifeSystemService` task methods
+
+Reminders page:
+- list fields: id/task_title/status/remind_at/last_event
+- actions: ack / snooze / skip
+- actions reuse `LifeSystemService` reminder methods
+
+All displayed times remain Beijing time via shared `bj_time` filter.

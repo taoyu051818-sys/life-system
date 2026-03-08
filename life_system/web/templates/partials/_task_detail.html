@@ -1,0 +1,13 @@
+﻿{% if task %}
+<div class="history">
+  <div class="history-item">id={{ task.id }}</div>
+  <div class="history-item">title={{ task.title }}</div>
+  <div class="history-item">status={{ task.status }}</div>
+  <div class="history-item">priority={{ task.priority }}</div>
+  <div class="history-item">notes={{ task.notes or '-' }}</div>
+  <div class="history-item">created_at={{ task.created_at | bj_time }}</div>
+  <div class="history-item">updated_at={{ task.updated_at | bj_time }}</div>
+</div>
+{% else %}
+<div class="muted">task not found</div>
+{% endif %}

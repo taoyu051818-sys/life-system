@@ -1,0 +1,30 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Life System Web{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">Life System</div>
+      <nav class="nav">
+        <a href="/">首页</a>
+        <a href="/inbox">Inbox Review</a>
+        <a href="/tasks">Tasks</a>
+        <a href="/reminders">Reminders</a>
+      </nav>
+      <div class="user-chip">用户: {{ active_user }}</div>
+      {% if logged_in %}
+      <form method="post" action="/logout">
+        <button class="btn small ghost" type="submit">退出</button>
+      </form>
+      {% endif %}
+    </header>
+    <main class="page">
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

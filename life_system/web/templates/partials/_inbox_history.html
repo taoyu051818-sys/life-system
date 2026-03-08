@@ -1,0 +1,15 @@
+﻿{% if rows %}
+<div class="history">
+  {% for row in rows %}
+  <div class="history-item">
+    <span>#{{ row.id }}</span>
+    <span>{{ row.created_at | bj_time }}</span>
+    <span>{{ row.action }}</span>
+    <span>target={{ row.target_type or '-' }}:{{ row.target_id or '-' }}</span>
+    <span>by={{ row.created_by or '-' }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="muted">暂无 triage history（inbox #{{ inbox_id }}）。</div>
+{% endif %}
