@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from life_system.cli.commands import run_cli
-from life_system.app.telegram_polling import parse_callback_data
+from life_system.app.telegram_polling import parse_callback_data, parse_journal_message
 from life_system.infra.db import connection_ctx
 
 
@@ -26,6 +26,18 @@ class TestCliFlows(unittest.TestCase):
         self.assertEqual(parse_callback_data("rk:5"), ("rk", 5))
         self.assertIsNone(parse_callback_data("bad"))
         self.assertIsNone(parse_callback_data("ra:x"))
+
+    def test_telegram_journal_parsing(self) -> None:
+        self.assertEqual(parse_journal_message("今天完成了背单词")["entry_type"], "activity")
+        self.assertEqual(parse_journal_message("/r 今天启动很难")["entry_type"], "reflection")
+        self.assertEqual(parse_journal_message("/w 今天有进展")["entry_type"], "win")
+        parsed = parse_journal_message("/c energy=2 focus=3 mood=4 今天状态一般")
+        self.assertEqual(parsed["entry_type"], "checkin")
+        self.assertEqual(parsed["energy_level"], 2)
+        self.assertEqual(parsed["focus_level"], 3)
+        self.assertEqual(parsed["mood_level"], 4)
+        self.assertEqual(parse_journal_message("/x unknown")["kind"], "ignore")
+        self.assertEqual(parse_journal_message("/c energy=9 bad")["kind"], "error")
 
     def test_init_db_creates_default_users(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -825,6 +837,297 @@ class TestCliFlows(unittest.TestCase):
             self.assertEqual(rc, 1)
             self.assertIn("telegram poll failed: telegram_http_error 400", out)
             self.assertNotIn("SECRET_TOKEN_ABC", out)
+
+    def test_telegram_poll_plain_text_to_activity(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "今天完成了背单词"}}]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("messages=1", out)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute(
+                    "SELECT entry_type, content, energy_level, focus_level, mood_level FROM journal_entries WHERE user_id=1"
+                ).fetchone()
+                self.assertEqual(row["entry_type"], "activity")
+                self.assertEqual(row["content"], "今天完成了背单词")
+                self.assertIsNone(row["energy_level"])
+            self.assertTrue(any("活动" in text for _, text in fake.sent))
+
+    def test_telegram_poll_r_w_c_to_journal_types(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/r 今天启动很难"}},
+                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/w 今天至少没脱离系统"}},
+                    {
+                        "update_id": 3,
+                        "message": {
+                            "chat": {"id": 1001, "type": "private"},
+                            "text": "/c energy=2 focus=2 mood=3 今天状态一般",
+                        },
+                    },
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("messages=3", out)
+            with connection_ctx(db_path) as conn:
+                rows = conn.execute(
+                    "SELECT entry_type, content, energy_level, focus_level, mood_level FROM journal_entries ORDER BY id ASC"
+                ).fetchall()
+                self.assertEqual(rows[0]["entry_type"], "reflection")
+                self.assertEqual(rows[1]["entry_type"], "win")
+                self.assertEqual(rows[2]["entry_type"], "checkin")
+                self.assertEqual(rows[2]["energy_level"], 2)
+                self.assertEqual(rows[2]["focus_level"], 2)
+                self.assertEqual(rows[2]["mood_level"], 3)
+
+    def test_telegram_poll_invalid_checkin_values_and_empty_payload(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/c energy=9 今天很乱"}},
+                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/r   "}},
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("messages=0", out)
+            self.assertIn("ignored=2", out)
+            self.assertIn("invalid_payload:1", out)
+            self.assertIn("empty_payload:1", out)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute("SELECT COUNT(*) AS c FROM journal_entries").fetchone()
+                self.assertEqual(row["c"], 0)
+            self.assertTrue(any("1 到 5" in text for _, text in fake.sent))
+            self.assertTrue(any("未识别到可记录内容" in text for _, text in fake.sent))
+
+    def test_telegram_poll_chat_id_int_string_match(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "init-db"])
+            with connection_ctx(db_path) as conn:
+                conn.execute("UPDATE users SET telegram_chat_id = ? WHERE username = 'xiaoyu'", (8045312073,))
+                conn.commit()
+
+            fake = FakeSender(
+                [{"update_id": 1, "message": {"chat": {"id": 8045312073, "type": "private"}, "text": "hello journal test"}}]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("messages=1", out)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute("SELECT entry_type, content FROM journal_entries WHERE user_id = 1").fetchone()
+                self.assertEqual(row["entry_type"], "activity")
+                self.assertEqual(row["content"], "hello journal test")
+
+    def test_telegram_poll_unknown_chat_and_non_text_ignored(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [
+                    {"update_id": 1, "message": {"chat": {"id": 9999, "type": "private"}, "text": "unknown user"}},
+                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "photo": [{"file_id": "x"}]}},
+                    {"update_id": 3, "message": {"chat": {"id": 1001, "type": "group"}, "text": "group text"}},
+                    {"update_id": 4, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/start"}},
+                ]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("processed=0", out)
+            self.assertIn("ignored=4", out)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute("SELECT COUNT(*) AS c FROM journal_entries").fetchone()
+                self.assertEqual(row["c"], 0)
+            self.assertEqual(fake.sent, [])
+
+    def test_telegram_poll_message_reply_failure_does_not_rollback_journal(self) -> None:
+        class FakeSender:
+            def __init__(self, updates: list[dict]):
+                self.updates = updates
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del offset
+                del limit
+                out = self.updates
+                self.updates = []
+                return out
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                del chat_id
+                del text
+                raise RuntimeError("telegram_http_error 400: blocked")
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                del callback_query_id
+                del text
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            fake = FakeSender(
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "只要记下来就好"}}]
+            )
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(rc, 0)
+            self.assertIn("messages=1", out)
+            with connection_ctx(db_path) as conn:
+                row = conn.execute("SELECT entry_type, content FROM journal_entries WHERE user_id=1").fetchone()
+                self.assertEqual(row["entry_type"], "activity")
+                self.assertEqual(row["content"], "只要记下来就好")
+
+    def test_telegram_poll_offset_with_message_and_callback(self) -> None:
+        class FakeSender:
+            def __init__(self):
+                self.calls: list[int | None] = []
+                self.updates_seq = [
+                    [
+                        {"update_id": 21, "message": {"chat": {"id": 1001, "type": "private"}, "text": "m1"}},
+                        {"update_id": 22, "callback_query": {"id": "c22", "data": "ra:1", "message": {"chat": {"id": 1001}}}},
+                    ],
+                    [],
+                ]
+                self.answers: list[tuple[str, str]] = []
+                self.sent: list[tuple[str, str]] = []
+
+            def get_updates(self, offset: int | None, limit: int) -> list[dict]:
+                del limit
+                self.calls.append(offset)
+                return self.updates_seq.pop(0) if self.updates_seq else []
+
+            def send_message(self, chat_id: str, text: str) -> str:
+                self.sent.append((chat_id, text))
+                return "m1"
+
+            def answer_callback_query(self, callback_query_id: str, text: str) -> None:
+                self.answers.append((callback_query_id, text))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "life.db"
+            run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
+            run_with_output(["--db", str(db_path), "task", "create", "offset mix task"])
+            run_with_output(["--db", str(db_path), "reminder", "create", "1", "2026-03-07T00:00:00+00:00"])
+            fake = FakeSender()
+            with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
+                run_with_output(["--db", str(db_path), "telegram", "poll"])
+                run_with_output(["--db", str(db_path), "telegram", "poll"])
+            self.assertEqual(fake.calls[0], None)
+            self.assertEqual(fake.calls[1], 23)
 
 
 if __name__ == "__main__":

@@ -62,14 +62,34 @@ class UserRepository:
         return cur.rowcount
 
     def get_by_telegram_chat_id(self, chat_id: str) -> dict[str, Any] | None:
-        row = self.conn.execute(
-            """
-            SELECT id, username, display_name, created_at, telegram_chat_id
-            FROM users
-            WHERE telegram_chat_id = ?
-            """,
-            (chat_id,),
-        ).fetchone()
+        normalized = str(chat_id).strip()
+        int_like = normalized.lstrip("-").isdigit()
+        int_value = int(normalized) if int_like else None
+        if int_value is not None:
+            row = self.conn.execute(
+                """
+                SELECT id, username, display_name, created_at, telegram_chat_id
+                FROM users
+                WHERE telegram_chat_id IS NOT NULL
+                  AND (
+                    TRIM(CAST(telegram_chat_id AS TEXT)) = ?
+                    OR CAST(TRIM(CAST(telegram_chat_id AS TEXT)) AS INTEGER) = ?
+                  )
+                LIMIT 1
+                """,
+                (normalized, int_value),
+            ).fetchone()
+        else:
+            row = self.conn.execute(
+                """
+                SELECT id, username, display_name, created_at, telegram_chat_id
+                FROM users
+                WHERE telegram_chat_id IS NOT NULL
+                  AND TRIM(CAST(telegram_chat_id AS TEXT)) = ?
+                LIMIT 1
+                """,
+                (normalized,),
+            ).fetchone()
         if row is None:
             return None
         return dict(row)

@@ -144,7 +144,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     telegram = subparsers.add_parser("telegram", help="Telegram polling utilities")
     telegram_sub = telegram.add_subparsers(dest="action", required=True)
-    telegram_poll = telegram_sub.add_parser("poll", help="Poll Telegram callback updates")
+    telegram_poll = telegram_sub.add_parser("poll", help="Poll Telegram updates (callbacks + private messages)")
     telegram_poll.add_argument("--limit", type=int, default=20)
 
     return parser
@@ -178,8 +178,15 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                 print(f"telegram poll failed: {exc}")
                 return 1
             print(
-                f"telegram poll done: fetched={result['fetched']}, processed={result['processed']}, ignored={result['ignored']}"
+                "telegram poll done: "
+                f"fetched={result['fetched']}, processed={result['processed']}, "
+                f"callbacks={result.get('processed_callbacks', 0)}, "
+                f"messages={result.get('processed_messages', 0)}, ignored={result['ignored']}"
             )
+            reasons = result.get("ignored_reasons", {})
+            if isinstance(reasons, dict) and reasons:
+                reason_text = ",".join(f"{k}:{reasons[k]}" for k in sorted(reasons))
+                print(f"ignored reasons: {reason_text}")
             return 0
 
         user = user_repo.get_by_username(args.user)
