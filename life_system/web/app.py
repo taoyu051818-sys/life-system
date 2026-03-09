@@ -60,8 +60,32 @@ def create_app(db_path: str | None = None) -> FastAPI:
             response.headers["Cache-Control"] = "no-store"
         return response
 
+    def _resolve_active_page(path: str) -> str | None:
+        if path == "/":
+            return "home"
+        if path.startswith("/inbox"):
+            return "inbox"
+        if path.startswith("/tasks"):
+            return "tasks"
+        if path.startswith("/reminders"):
+            return "reminders"
+        if path.startswith("/journal"):
+            return "journal"
+        if path.startswith("/anki/review"):
+            return "anki_review"
+        if path.startswith("/anki/stats"):
+            return "anki_stats"
+        if path == "/anki":
+            return "anki"
+        return None
+
     def _base_ctx(request: Request) -> dict[str, Any]:
-        return {"request": request, "active_user": active_username, "logged_in": _is_authenticated(request)}
+        return {
+            "request": request,
+            "active_user": active_username,
+            "logged_in": _is_authenticated(request),
+            "active_page": _resolve_active_page(request.url.path),
+        }
 
     @app.get("/health")
     def health() -> dict[str, str]:

@@ -11,14 +11,14 @@
     <header class="topbar">
       <div class="brand">Life System</div>
       <nav class="nav">
-        <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">首页</a>
-        <a class="{% if request.url.path.startswith('/inbox') %}active{% endif %}" href="/inbox">Inbox Review</a>
-        <a class="{% if request.url.path.startswith('/tasks') %}active{% endif %}" href="/tasks">Tasks</a>
-        <a class="{% if request.url.path.startswith('/reminders') %}active{% endif %}" href="/reminders">Reminders</a>
-        <a class="{% if request.url.path.startswith('/journal') %}active{% endif %}" href="/journal">Journal</a>
-        <a class="{% if request.url.path.startswith('/anki') and not request.url.path.startswith('/anki/review') %}active{% endif %}" href="/anki">Anki</a>
-        <a class="{% if request.url.path.startswith('/anki/review') %}active{% endif %}" href="/anki/review">Anki Review</a>
-        <a class="{% if request.url.path.startswith('/anki/stats') %}active{% endif %}" href="/anki/stats">Anki Stats</a>
+        <a class="{% if active_page == 'home' %}active{% endif %}" href="/">首页</a>
+        <a class="{% if active_page == 'inbox' %}active{% endif %}" href="/inbox">Inbox Review</a>
+        <a class="{% if active_page == 'tasks' %}active{% endif %}" href="/tasks">Tasks</a>
+        <a class="{% if active_page == 'reminders' %}active{% endif %}" href="/reminders">Reminders</a>
+        <a class="{% if active_page == 'journal' %}active{% endif %}" href="/journal">Journal</a>
+        <a class="{% if active_page == 'anki' %}active{% endif %}" href="/anki">Anki</a>
+        <a class="{% if active_page == 'anki_review' %}active{% endif %}" href="/anki/review">Anki Review</a>
+        <a class="{% if active_page == 'anki_stats' %}active{% endif %}" href="/anki/stats">Anki Stats</a>
       </nav>
       <div class="user-chip">用户: {{ active_user }}</div>
       {% if logged_in %}

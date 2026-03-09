@@ -472,3 +472,16 @@ def test_anki_stats_page_empty() -> None:
         assert page.status_code == 200
         assert "Anki Stats" in page.text
         assert "0" in page.text
+
+
+def test_anki_stats_nav_not_highlight_anki_tab() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/anki/stats")
+        assert page.status_code == 200
+        assert 'href="/anki/stats">Anki Stats</a>' in page.text
+        assert '<a class="active" href="/anki">Anki</a>' not in page.text
