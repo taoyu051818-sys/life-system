@@ -10,3 +10,4 @@ source "${VENV_PATH}/bin/activate"
 
 python -m life_system.main --db "${DB_PATH}" reminder due --send
 
+python -m life_system.main --db "${DB_PATH}" inbox review-send
