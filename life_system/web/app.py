@@ -43,10 +43,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(web_dir / "static")), name="static")
 
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'sha256-pgn1TCGZX6O77zDvy0oTODMOxemn0oj0LeCnQTRj7Kg='; "
+        "img-src 'self' data:;"
+    )
+
     @app.middleware("http")
     async def add_security_and_cache_headers(request: Request, call_next: Any) -> Any:
         response = await call_next(request)
-        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+        response.headers["Content-Security-Policy"] = csp
         if request.url.path.startswith("/static/"):
             response.headers["Cache-Control"] = "public, max-age=3600"
         else:
@@ -464,6 +471,7 @@ def _none_if_blank(value: str | None) -> str | None:
         return None
     out = value.strip()
     return out if out else None
+
 
 
 

@@ -258,3 +258,4 @@ def test_anki_update_and_archive() -> None:
             status = conn.execute("SELECT status FROM anki_drafts WHERE id=1").fetchone()["status"]
             assert status == "archived"
 
+
