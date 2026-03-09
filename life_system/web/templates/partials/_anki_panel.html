@@ -1,0 +1,71 @@
+﻿<div id="anki-panel">
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  <section class="card nested">
+    <h3>Import JSON</h3>
+    <p class="muted">Paste AI-generated JSON. Supports one object or an array. Required: front/back. Optional: tags, deck.</p>
+    <pre class="json-sample">{
+  "front": "photosynthesis definition",
+  "back": "process by which green plants convert light energy",
+  "tags": ["biology", "plants"],
+  "deck": "default"
+}
+
+[
+  {"front": "mitosis?", "back": "cell division", "tags": ["biology"], "deck": "default"},
+  {"front": "GDP meaning", "back": "Gross Domestic Product", "tags": "economics"}
+]</pre>
+
+    <form class="stack-form" hx-post="/anki/import-json" hx-target="#anki-panel" hx-swap="outerHTML">
+      <textarea name="raw_json" rows="10" placeholder="paste JSON here">{{ import_json }}</textarea>
+      <button class="btn" type="submit">Import JSON</button>
+    </form>
+
+    {% if import_errors %}
+    <div class="error-box">
+      <strong>Import errors:</strong>
+      <ul>
+        {% for e in import_errors %}
+        <li>index={{ e.index if e.index is not none else '-' }} reason={{ e.reason }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </section>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>front</th><th>back</th><th>tags</th><th>deck</th><th>status</th><th>created_at</th><th>source</th><th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in drafts %}
+        <tr>
+          <td>{{ d.id }}</td>
+          <td class="content">{{ d.front }}</td>
+          <td class="content">{{ d.back }}</td>
+          <td>{{ d.tags or '-' }}</td>
+          <td>{{ d.deck_name or '-' }}</td>
+          <td>{{ d.status }}</td>
+          <td>{{ d.created_at | bj_time }}</td>
+          <td>{{ d.source_type }}:{{ d.source_id if d.source_id is not none else '-' }}</td>
+          <td>
+            <form class="stack-form compact" hx-post="/anki/{{ d.id }}/update" hx-target="#anki-panel" hx-swap="outerHTML">
+              <input name="front" placeholder="front (optional)" />
+              <input name="back" placeholder="back (optional)" />
+              <input name="tags" placeholder="tags (optional)" />
+              <input name="deck_name" placeholder="deck (optional)" />
+              <button class="btn small secondary" type="submit">update</button>
+            </form>
+            <button class="btn small ghost" hx-post="/anki/{{ d.id }}/archive" hx-target="#anki-panel" hx-swap="outerHTML">archive</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="muted">no anki drafts</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>

@@ -56,3 +56,16 @@ th, td { border-bottom: 1px solid var(--line); padding: 8px; text-align: left; v
 
 .inline-form { display: inline-flex; gap: 6px; align-items: center; }
 .inline-form input { width: 220px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; }
+
+.journal-list { display: grid; gap: 10px; }
+.journal-item { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 10px; }
+.journal-head { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.pill { background: #f3f4f6; border-radius: 12px; padding: 2px 8px; font-size: 12px; }
+.journal-content { font-size: 14px; margin-bottom: 6px; white-space: pre-wrap; }
+.journal-meta { font-size: 12px; }
+
+.nested { margin-bottom: 14px; }
+textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.json-sample { background: #111827; color: #e5e7eb; border-radius: 8px; padding: 10px; overflow: auto; font-size: 12px; }
+.error-box { border: 1px solid #fca5a5; background: #fef2f2; padding: 8px; border-radius: 8px; color: #991b1b; }
+.stack-form.compact { gap: 6px; margin: 0 0 8px 0; }

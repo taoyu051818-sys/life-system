@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -22,7 +22,7 @@ SESSION_UNTIL_KEY = "web_auth_until"
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
-    app = FastAPI(title="Life System Web", version="0.3.0")
+    app = FastAPI(title="Life System Web", version="0.4.0")
 
     current_db_path = resolve_db_path(db_path or os.getenv("LIFE_SYSTEM_DB"))
     ensure_database(current_db_path)
@@ -118,6 +118,17 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "partials/_quick_journal_panel.html",
             {"request": request, "active_user": active_username, "flash": "checkin saved"},
         )
+
+    @app.get("/journal", response_class=HTMLResponse)
+    def journal_page(request: Request, limit: int = Query(50, ge=1, le=500)) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            rows = service.list_journal(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update({"rows": rows, "limit": limit})
+        return templates.TemplateResponse(request, "journal.html", ctx)
 
     @app.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request) -> HTMLResponse:
@@ -226,10 +237,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         snooze_until = (form.get("snooze_until") or "").strip()
-        if not _is_iso_aware(snooze_until):
-            return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": [], "flash": "invalid ISO datetime"}, status_code=400)
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
+            if not _is_iso_aware(snooze_until):
+                tasks = service.list_tasks(limit=200)
+                return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": "invalid ISO datetime"}, status_code=400)
             ok = service.snooze_task(task_id, snooze_until)
             flash = f"task snoozed: {task_id}" if ok else f"task not found: {task_id}"
             tasks = service.list_tasks(limit=200)
@@ -272,13 +284,91 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         remind_at = (form.get("remind_at") or "").strip()
-        if not _is_iso_aware(remind_at):
-            return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": [], "flash": "invalid ISO datetime"}, status_code=400)
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
+            if not _is_iso_aware(remind_at):
+                reminders = service.list_reminders(limit=200)
+                return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": "invalid ISO datetime"}, status_code=400)
             status = service.snooze_reminder(reminder_id, remind_at)
             reminders = service.list_reminders(limit=200)
         return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": f"snooze: {status}"})
+
+    @app.get("/anki", response_class=HTMLResponse)
+    def anki_page(request: Request, limit: int = Query(100, ge=1, le=500)) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            drafts = service.list_anki_drafts(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update({"drafts": drafts, "flash": None, "import_errors": [], "import_json": "", "limit": limit})
+        return templates.TemplateResponse(request, "anki.html", ctx)
+
+    @app.post("/anki/{draft_id}/update", response_class=HTMLResponse)
+    async def anki_update(request: Request, draft_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        front = _none_if_blank(form.get("front"))
+        back = _none_if_blank(form.get("back"))
+        tags = _none_if_blank(form.get("tags"))
+        deck = _none_if_blank(form.get("deck_name"))
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            status = service.update_anki_draft(draft_id, front=front, back=back, tags=tags, deck_name=deck)
+            drafts = service.list_anki_drafts(limit=100)
+        return templates.TemplateResponse(request, "partials/_anki_panel.html", {
+            "request": request,
+            "active_user": active_username,
+            "drafts": drafts,
+            "flash": f"update: {status}",
+            "import_errors": [],
+            "import_json": "",
+        })
+
+    @app.post("/anki/{draft_id}/archive", response_class=HTMLResponse)
+    def anki_archive(request: Request, draft_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            status = service.archive_anki_draft(draft_id)
+            drafts = service.list_anki_drafts(limit=100)
+        return templates.TemplateResponse(request, "partials/_anki_panel.html", {
+            "request": request,
+            "active_user": active_username,
+            "drafts": drafts,
+            "flash": f"archive: {status}",
+            "import_errors": [],
+            "import_json": "",
+        })
+
+    @app.post("/anki/import-json", response_class=HTMLResponse)
+    async def anki_import_json(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        raw_json = (form.get("raw_json") or "").strip()
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            result = service.import_anki_json(raw_json)
+            drafts = service.list_anki_drafts(limit=100)
+        if result["ok"]:
+            flash = f"import success: {result['created']}"
+            errors: list[dict[str, Any]] = []
+            kept_json = ""
+        else:
+            flash = f"import failed: {len(result['errors'])}"
+            errors = result["errors"]
+            kept_json = raw_json
+        return templates.TemplateResponse(request, "partials/_anki_panel.html", {
+            "request": request,
+            "active_user": active_username,
+            "drafts": drafts,
+            "flash": flash,
+            "import_errors": errors,
+            "import_json": kept_json,
+        })
 
     return app
 
@@ -352,3 +442,10 @@ def _is_iso_aware(value: str) -> bool:
     except ValueError:
         return False
     return dt.tzinfo is not None
+
+
+def _none_if_blank(value: str | None) -> str | None:
+    if value is None:
+        return None
+    out = value.strip()
+    return out if out else None

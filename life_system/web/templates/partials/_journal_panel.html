@@ -1,0 +1,22 @@
+﻿<div class="journal-list">
+  {% for row in rows %}
+  <article class="journal-item">
+    <div class="journal-head">
+      <span class="pill">#{{ row.id }}</span>
+      <span class="pill">{{ row.entry_type }}</span>
+      <span class="muted">{{ row.created_at | bj_time }}</span>
+    </div>
+    <div class="journal-content">{{ row.content }}</div>
+    <div class="journal-meta muted">
+      E={{ row.energy_level if row.energy_level is not none else '-' }}
+      F={{ row.focus_level if row.focus_level is not none else '-' }}
+      M={{ row.mood_level if row.mood_level is not none else '-' }}
+      task={{ row.related_task_id if row.related_task_id is not none else '-' }}
+      inbox={{ row.related_inbox_id if row.related_inbox_id is not none else '-' }}
+      tags={{ row.tags or '-' }}
+    </div>
+  </article>
+  {% else %}
+  <div class="muted">no journal entries</div>
+  {% endfor %}
+</div>

@@ -1,0 +1,9 @@
+﻿{% extends "base.html" %}
+{% block title %}Journal | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Journal</h1>
+  <p class="muted">history (limit={{ limit }})</p>
+  {% include "partials/_journal_panel.html" %}
+</section>
+{% endblock %}

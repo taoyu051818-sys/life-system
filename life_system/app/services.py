@@ -572,6 +572,72 @@ class LifeSystemService:
             self.event_logger.log("anki_draft_updated", {"draft_id": draft_id, "fields": changed})
         return status
 
+    def import_anki_json(self, raw_json: str) -> dict[str, Any]:
+        text = raw_json.strip()
+        if not text:
+            return {"ok": False, "created": 0, "errors": [{"index": None, "reason": "empty_json"}], "ids": []}
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            return {
+                "ok": False,
+                "created": 0,
+                "errors": [{"index": None, "reason": f"invalid_json: {exc.msg}"}],
+                "ids": [],
+            }
+
+        cards = data if isinstance(data, list) else [data]
+        errors: list[dict[str, Any]] = []
+        normalized: list[dict[str, Any]] = []
+
+        for idx, item in enumerate(cards, start=1):
+            if not isinstance(item, dict):
+                errors.append({"index": idx, "reason": "item_not_object"})
+                continue
+
+            front = str(item.get("front", "")).strip()
+            back = str(item.get("back", "")).strip()
+            if not front:
+                errors.append({"index": idx, "reason": "missing_front"})
+            if not back:
+                errors.append({"index": idx, "reason": "missing_back"})
+            if not front or not back:
+                continue
+
+            deck = str(item.get("deck", "default") or "default").strip() or "default"
+            tags_obj = item.get("tags")
+            tags: str | None = None
+            if isinstance(tags_obj, list):
+                if not all(isinstance(t, str) for t in tags_obj):
+                    errors.append({"index": idx, "reason": "invalid_tags_array"})
+                    continue
+                tags = ",".join([t.strip() for t in tags_obj if t.strip()])
+            elif isinstance(tags_obj, str):
+                tags = tags_obj.strip() or None
+            elif tags_obj is None:
+                tags = None
+            else:
+                errors.append({"index": idx, "reason": "invalid_tags_type"})
+                continue
+
+            normalized.append({"front": front, "back": back, "deck": deck, "tags": tags})
+
+        if errors:
+            return {"ok": False, "created": 0, "errors": errors, "ids": []}
+
+        ids: list[int] = []
+        for card in normalized:
+            draft_id = self.create_anki_draft(
+                source_type="manual",
+                source_id=None,
+                front=card["front"],
+                back=card["back"],
+                deck_name=card["deck"],
+                tags=card["tags"],
+            )
+            ids.append(draft_id)
+        return {"ok": True, "created": len(ids), "errors": [], "ids": ids}
+
     def export_anki_drafts_csv(self, output_path: str, only_new: bool = False) -> int:
         rows = self.anki_repo.list_all(user_id=self.user_id, only_new=only_new)
         path = Path(output_path)
