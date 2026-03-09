@@ -134,6 +134,9 @@ def build_parser() -> argparse.ArgumentParser:
     anki_review.add_argument("card_id", type=int)
     anki_review.add_argument("--rate", required=True, choices=["again", "hard", "good", "easy"])
     anki_review.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    anki_activate = anki_sub.add_parser("activate", help="Activate draft ids into review cards")
+    anki_activate.add_argument("draft_ids", nargs="+", type=int)
+    anki_activate.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     anki_update = anki_sub.add_parser("update")
     anki_update.add_argument("draft_id", type=int)
     anki_update.add_argument("--front", default=None)
@@ -816,8 +819,24 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             tags=args.tags,
         )
         print(f"anki draft created: id={draft_id}")
-        for warning in service.pop_nonfatal_warnings():
-            print(f"warning: {warning}")
+        return 0
+
+    if entity == "anki" and action == "activate":
+        result = service.activate_anki_drafts(draft_ids=[int(x) for x in args.draft_ids], now=args.now)
+        print(
+            "anki activate: "
+            f"created_count={result['created_count']} "
+            f"skipped_duplicate_count={result['skipped_duplicate_count']}"
+        )
+        if result["created_card_ids"]:
+            print("created_card_ids=" + ",".join(str(i) for i in result["created_card_ids"]))
+        for item in result["skipped"]:
+            if item.get("reason") == "duplicate":
+                print(
+                    f"skipped draft_id={item['draft_id']} reason=duplicate existing_card_id={item.get('existing_card_id')}"
+                )
+            else:
+                print(f"skipped draft_id={item['draft_id']} reason={item.get('reason')}")
         return 0
 
     if entity == "anki" and action == "review-due":

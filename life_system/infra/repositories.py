@@ -790,29 +790,55 @@ class AnkiDraftRepository:
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list(self, user_id: int, status: str | None, limit: int) -> list[dict[str, Any]]:
+    def list(
+        self,
+        user_id: int,
+        status: str | None,
+        limit: int,
+        deck_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
+            FROM anki_drafts
+            WHERE user_id = ?
+        """
+        params: list[Any] = [user_id]
         if status:
-            rows = self.conn.execute(
-                """
-                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
-                FROM anki_drafts
-                WHERE user_id = ? AND status = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (user_id, status, limit),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                """
-                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
-                FROM anki_drafts
-                WHERE user_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (user_id, limit),
-            ).fetchall()
+            sql += " AND status = ?"
+            params.append(status)
+        if deck_name:
+            sql += " AND deck_name = ?"
+            params.append(deck_name)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_deck_names(self, user_id: int) -> list[str]:
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT deck_name
+            FROM anki_drafts
+            WHERE user_id = ? AND deck_name IS NOT NULL AND deck_name != ''
+            ORDER BY deck_name ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
+    def list_by_ids(self, user_id: int, draft_ids: list[int]) -> list[dict[str, Any]]:
+        if not draft_ids:
+            return []
+        placeholders = ", ".join("?" for _ in draft_ids)
+        rows = self.conn.execute(
+            f"""
+            SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
+            FROM anki_drafts
+            WHERE user_id = ? AND id IN ({placeholders})
+            ORDER BY created_at DESC, id DESC
+            """,
+            [user_id, *draft_ids],
+        ).fetchall()
         return [dict(row) for row in rows]
 
     def list_all(self, user_id: int, only_new: bool = False) -> list[dict[str, Any]]:

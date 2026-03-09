@@ -2438,6 +2438,7 @@ class TestCliFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
             run_with_output(["--db", db_path, "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
+            run_with_output(["--db", db_path, "anki", "activate", "1"])
             rc1, out1 = run_with_output(["--db", db_path, "anki", "review-due", "--limit", "20"])
             self.assertEqual(rc1, 0)
             self.assertIn("Q1", out1)
@@ -2455,16 +2456,22 @@ class TestCliFlows(unittest.TestCase):
                 ).fetchone()["c"]
                 self.assertEqual(event_count, 1)
 
-    def test_anki_card_dedupe_warning_on_duplicate_draft(self) -> None:
+    def test_anki_create_draft_does_not_auto_create_card_and_activate_dedup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
             run_with_output(["--db", db_path, "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
-            rc, out = run_with_output(["--db", db_path, "anki", "create", "manual", "  Q1  ", "A1", "--deck-name", "default"])
-            self.assertEqual(rc, 0)
-            self.assertIn("warning: anki_card_duplicate_detected", out)
+            run_with_output(["--db", db_path, "anki", "create", "manual", "  Q1  ", "A1", "--deck-name", "default"])
             with connection_ctx(db_path) as conn:
-                c = conn.execute("SELECT COUNT(*) AS c FROM anki_cards").fetchone()["c"]
-                self.assertEqual(c, 1)
+                c0 = conn.execute("SELECT COUNT(*) AS c FROM anki_cards").fetchone()["c"]
+                self.assertEqual(c0, 0)
+
+            rc1, out1 = run_with_output(["--db", db_path, "anki", "activate", "1", "2"])
+            self.assertEqual(rc1, 0)
+            self.assertIn("created_count=1", out1)
+            self.assertIn("skipped_duplicate_count=1", out1)
+            with connection_ctx(db_path) as conn:
+                c1 = conn.execute("SELECT COUNT(*) AS c FROM anki_cards").fetchone()["c"]
+                self.assertEqual(c1, 1)
 
 
 

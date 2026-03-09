@@ -33,39 +33,6 @@
     {% endif %}
   </section>
 
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr>
-          <th>ID</th><th>front</th><th>back</th><th>tags</th><th>deck</th><th>status</th><th>created_at</th><th>source</th><th>actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for d in drafts %}
-        <tr>
-          <td>{{ d.id }}</td>
-          <td class="content">{{ d.front }}</td>
-          <td class="content">{{ d.back }}</td>
-          <td>{{ d.tags or '-' }}</td>
-          <td>{{ d.deck_name or '-' }}</td>
-          <td>{{ d.status }}</td>
-          <td>{{ d.created_at | bj_time }}</td>
-          <td>{{ d.source_type }}:{{ d.source_id if d.source_id is not none else '-' }}</td>
-          <td>
-            <form class="stack-form compact" hx-post="/anki/{{ d.id }}/update" hx-target="#anki-panel" hx-swap="outerHTML">
-              <input name="front" placeholder="front (optional)" />
-              <input name="back" placeholder="back (optional)" />
-              <input name="tags" placeholder="tags (optional)" />
-              <input name="deck_name" placeholder="deck (optional)" />
-              <button class="btn small secondary" type="submit">update</button>
-            </form>
-            <button class="btn small ghost" hx-post="/anki/{{ d.id }}/archive" hx-target="#anki-panel" hx-swap="outerHTML">archive</button>
-          </td>
-        </tr>
-        {% else %}
-        <tr><td colspan="9" class="muted">no anki drafts</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {% include "partials/_anki_drafts_panel.html" %}
+  {% include "partials/_anki_due_cards_panel.html" %}
 </div>

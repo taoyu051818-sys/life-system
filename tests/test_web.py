@@ -163,7 +163,7 @@ def test_journal_history_page_shows_entries() -> None:
         assert "second note" in page.text
 
 
-def test_anki_page_shows_existing_draft() -> None:
+def test_anki_page_shows_existing_draft_fields() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "life.db"
         run_cli(["--db", str(db_path), "init-db"])
@@ -172,8 +172,12 @@ def test_anki_page_shows_existing_draft() -> None:
         _login(client)
         page = client.get("/anki")
         assert page.status_code == 200
+        assert "created_at" in page.text
+        assert "deck_name" in page.text
+        assert "tags" in page.text
+        assert "source_type" in page.text
+        assert "status" in page.text
         assert "q1" in page.text
-        assert "a1" in page.text
 
 
 def test_anki_import_json_single_success() -> None:
@@ -265,6 +269,7 @@ def test_anki_review_page_and_rate_flow() -> None:
         db_path = Path(tmp) / "life.db"
         run_cli(["--db", str(db_path), "init-db"])
         run_cli(["--db", str(db_path), "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1"])
         client = _build_client(db_path)
         _login(client)
 
@@ -283,3 +288,123 @@ def test_anki_review_page_and_rate_flow() -> None:
             ev = conn.execute("SELECT COUNT(*) AS c FROM anki_review_events WHERE card_id=1").fetchone()
             assert ev["c"] == 1
 
+
+
+def test_create_draft_does_not_auto_create_card() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q1", "a1", "--deck-name", "default"])
+        with connection_ctx(db_path) as conn:
+            c = conn.execute("SELECT COUNT(*) AS c FROM anki_cards WHERE user_id=1").fetchone()["c"]
+            assert c == 0
+
+
+def test_web_anki_batch_activate_success_and_duplicate_skip() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q1", "a1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "  q1", "a1", "--deck-name", "default"])
+        client = _build_client(db_path)
+        _login(client)
+
+        resp = client.post(
+            "/anki/batch-activate",
+            data={"draft_id": ["1", "2"], "deck_filter": "", "limit": "100"},
+        )
+        assert resp.status_code == 200
+        assert "batch activate: activated=1" in resp.text
+
+        with connection_ctx(db_path) as conn:
+            c = conn.execute("SELECT COUNT(*) AS c FROM anki_cards WHERE user_id=1").fetchone()["c"]
+            assert c == 1
+
+
+def test_activate_multi_drafts_creates_multiple_cards() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q1", "a1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q2", "a2", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1", "2"])
+        with connection_ctx(db_path) as conn:
+            c = conn.execute("SELECT COUNT(*) AS c FROM anki_cards WHERE user_id=1").fetchone()["c"]
+            assert c == 2
+
+
+def test_anki_page_shows_due_cards_list() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "due-q", "due-a", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1"])
+        client = _build_client(db_path)
+        _login(client)
+        page = client.get("/anki")
+        assert page.status_code == 200
+        assert "Due Cards" in page.text
+        assert "due-q" in page.text
+
+
+def test_web_anki_batch_review_success() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q1", "a1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1"])
+        client = _build_client(db_path)
+        _login(client)
+
+        resp = client.post(
+            "/anki/batch-review",
+            data={"card_id": ["1"], "rating": "good", "deck_filter": "", "limit": "100", "due_limit": "50"},
+        )
+        assert resp.status_code == 200
+        assert "batch review: reviewed=1" in resp.text
+
+        with connection_ctx(db_path) as conn:
+            ev = conn.execute("SELECT COUNT(*) AS c FROM anki_review_events WHERE card_id=1").fetchone()["c"]
+            assert ev == 1
+
+
+def test_web_anki_batch_actions_no_selection_friendly_message() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q1", "a1", "--deck-name", "default"])
+        client = _build_client(db_path)
+        _login(client)
+
+        r1 = client.post("/anki/batch-activate", data={"deck_filter": "", "limit": "100", "due_limit": "50"})
+        assert r1.status_code == 200
+        assert "no draft selected" in r1.text
+
+        r2 = client.post("/anki/batch-review", data={"rating": "good", "deck_filter": "", "limit": "100", "due_limit": "50"})
+        assert r2.status_code == 200
+        assert "no due card selected" in r2.text
+
+
+def test_web_anki_batch_activate_under_deck_filter_only_selected_processed() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q-default", "a1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "q-eco", "a2", "--deck-name", "economics"])
+        client = _build_client(db_path)
+        _login(client)
+
+        # filter page still shows only selected deck rows, then activate selected ids only
+        page = client.get("/anki?deck=default&limit=100&due_limit=50")
+        assert page.status_code == 200
+        assert "q-default" in page.text
+
+        resp = client.post(
+            "/anki/batch-activate",
+            data={"draft_id": ["1"], "deck_filter": "default", "limit": "100", "due_limit": "50"},
+        )
+        assert resp.status_code == 200
+        with connection_ctx(db_path) as conn:
+            rows = conn.execute("SELECT draft_id FROM anki_cards ORDER BY id ASC").fetchall()
+            ids = [r[0] for r in rows]
+            assert ids == [1]

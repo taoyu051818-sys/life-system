@@ -542,19 +542,19 @@ class LifeSystemService:
             tags=tags,
             created_at=created_at,
         )
-        self._ensure_anki_card(
-            draft_id=draft_id,
-            front=front,
-            back=back,
-            tags=tags,
-            deck=deck_name,
-            created_at=created_at,
-        )
         self.event_logger.log("anki_draft_created", {"draft_id": draft_id, "source_type": source_type})
         return draft_id
 
-    def list_anki_drafts(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
-        return self.anki_repo.list(user_id=self.user_id, status=status, limit=limit)
+    def list_anki_drafts(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        deck_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.anki_repo.list(user_id=self.user_id, status=status, limit=limit, deck_name=deck_name)
+
+    def list_anki_decks(self) -> list[str]:
+        return self.anki_repo.list_deck_names(user_id=self.user_id)
 
     def show_anki_draft(self, draft_id: int) -> dict[str, Any] | None:
         return self.anki_repo.get_with_trace(user_id=self.user_id, draft_id=draft_id)
@@ -585,6 +585,67 @@ class LifeSystemService:
             changed = [k for k, v in {"front": front, "back": back, "tags": tags, "deck_name": deck_name}.items() if v is not None]
             self.event_logger.log("anki_draft_updated", {"draft_id": draft_id, "fields": changed})
         return status
+
+    def activate_anki_drafts(self, draft_ids: list[int], now: str | None = None) -> dict[str, Any]:
+        now_iso = now or now_utc_iso()
+        drafts = self.anki_repo.list_by_ids(user_id=self.user_id, draft_ids=draft_ids)
+        created_card_ids: list[int] = []
+        skipped_items: list[dict[str, Any]] = []
+
+        for draft in drafts:
+            if str(draft.get("status")) == "archived":
+                skipped_items.append({"draft_id": int(draft["id"]), "reason": "archived"})
+                continue
+
+            dedupe_key = self._anki_dedupe_key(
+                front=str(draft.get("front") or ""),
+                back=str(draft.get("back") or ""),
+                deck=str(draft.get("deck_name") or "default"),
+            )
+            existing = self.anki_card_repo.find_by_dedupe_key(user_id=self.user_id, dedupe_key=dedupe_key)
+            if existing is not None:
+                skipped_items.append(
+                    {
+                        "draft_id": int(draft["id"]),
+                        "reason": "duplicate",
+                        "existing_card_id": int(existing["id"]),
+                    }
+                )
+                continue
+
+            card_id = self.anki_card_repo.create(
+                user_id=self.user_id,
+                draft_id=int(draft["id"]),
+                front=str(draft.get("front") or ""),
+                back=str(draft.get("back") or ""),
+                tags=draft.get("tags"),
+                deck=str(draft.get("deck_name") or "default"),
+                dedupe_key=dedupe_key,
+                state="new",
+                due_at=now_iso,
+                created_at=now_iso,
+            )
+            created_card_ids.append(card_id)
+
+        input_set = {int(x) for x in draft_ids}
+        found_set = {int(d["id"]) for d in drafts}
+        for missing_id in sorted(input_set - found_set):
+            skipped_items.append({"draft_id": missing_id, "reason": "not_found"})
+
+        duplicate_count = sum(1 for item in skipped_items if item.get("reason") == "duplicate")
+        failed_count = sum(1 for item in skipped_items if item.get("reason") not in {"duplicate", "not_found", "archived"})
+        result = {
+            "created_count": len(created_card_ids),
+            "skipped_duplicate_count": duplicate_count,
+            "created_card_ids": created_card_ids,
+            "skipped": skipped_items,
+            "activated_count": len(created_card_ids),
+            "deduped_count": duplicate_count,
+            "skipped_count": len(skipped_items),
+            "failed_count": failed_count,
+        }
+        self.event_logger.log("anki_drafts_activated", result)
+        return result
 
     def list_due_anki_cards(self, limit: int = 20, now: str | None = None) -> list[dict[str, Any]]:
         now_iso = now or now_utc_iso()
@@ -680,6 +741,34 @@ class LifeSystemService:
             {"card_id": card_id, "rating": rating_norm, "state_before": state_before, "state_after": next_state},
         )
         return self.anki_card_repo.get(user_id=self.user_id, card_id=card_id)
+
+    def review_anki_cards(self, card_ids: list[int], rating: str, now: str | None = None) -> dict[str, Any]:
+        reviewed = 0
+        skipped = 0
+        failed = 0
+        reviewed_ids: list[int] = []
+
+        for card_id in card_ids:
+            try:
+                updated = self.review_anki_card(card_id=card_id, rating=rating, now=now)
+            except ValueError:
+                failed += 1
+                continue
+            except Exception:
+                failed += 1
+                continue
+            if updated is None:
+                skipped += 1
+                continue
+            reviewed += 1
+            reviewed_ids.append(int(updated["id"]))
+
+        return {
+            "reviewed_count": reviewed,
+            "skipped_count": skipped,
+            "failed_count": failed,
+            "reviewed_card_ids": reviewed_ids,
+        }
 
     def import_anki_json(self, raw_json: str) -> dict[str, Any]:
         text = raw_json.strip()
@@ -1066,35 +1155,6 @@ class LifeSystemService:
                 self._normalize_anki_text(back),
                 self._normalize_anki_text(deck),
             ]
-        )
-
-    def _ensure_anki_card(
-        self,
-        draft_id: int,
-        front: str,
-        back: str,
-        tags: str | None,
-        deck: str,
-        created_at: str,
-    ) -> int | None:
-        dedupe_key = self._anki_dedupe_key(front=front, back=back, deck=deck)
-        existing = self.anki_card_repo.find_by_dedupe_key(user_id=self.user_id, dedupe_key=dedupe_key)
-        if existing is not None:
-            self._nonfatal_warnings.append(
-                f"anki_card_duplicate_detected existing_card_id={existing['id']} draft_id={draft_id}"
-            )
-            return None
-        return self.anki_card_repo.create(
-            user_id=self.user_id,
-            draft_id=draft_id,
-            front=front,
-            back=back,
-            tags=tags,
-            deck=deck,
-            dedupe_key=dedupe_key,
-            state="new",
-            due_at=created_at,
-            created_at=created_at,
         )
 
     def _anki_transition_new_or_learning(

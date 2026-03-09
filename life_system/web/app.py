@@ -316,15 +316,77 @@ def create_app(db_path: str | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": f"snooze: {status}"})
 
     @app.get("/anki", response_class=HTMLResponse)
-    def anki_page(request: Request, limit: int = Query(100, ge=1, le=500)) -> HTMLResponse:
+    def anki_page(
+        request: Request,
+        limit: int = Query(100, ge=1, le=500),
+        due_limit: int = Query(50, ge=1, le=500),
+        deck: str | None = Query(None),
+        draft_select: str | None = Query(None),
+        due_select: str | None = Query(None),
+    ) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        deck_filter = _none_if_blank(deck)
+        draft_select_all = (draft_select == "all")
+        due_select_all = (due_select == "all")
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
-            drafts = service.list_anki_drafts(limit=limit)
+            drafts = service.list_anki_drafts(limit=limit, deck_name=deck_filter)
+            due_cards = service.list_due_anki_cards(limit=due_limit)
+            deck_options = service.list_anki_decks()
         ctx = _base_ctx(request)
-        ctx.update({"drafts": drafts, "flash": None, "import_errors": [], "import_json": "", "limit": limit})
+        ctx.update(
+            {
+                "drafts": drafts,
+                "due_cards": due_cards,
+                "flash": None,
+                "import_errors": [],
+                "import_json": "",
+                "limit": limit,
+                "due_limit": due_limit,
+                "deck_filter": deck_filter,
+                "deck_options": deck_options,
+                "draft_select_all": draft_select_all,
+                "due_select_all": due_select_all,
+            }
+        )
         return templates.TemplateResponse(request, "anki.html", ctx)
+
+    def _anki_panel_response(
+        request: Request,
+        service: LifeSystemService,
+        *,
+        flash: str,
+        import_errors: list[dict[str, Any]] | None = None,
+        import_json: str = "",
+        deck_filter: str | None = None,
+        limit: int = 100,
+        due_limit: int = 50,
+        draft_select_all: bool = False,
+        due_select_all: bool = False,
+    ) -> HTMLResponse:
+        drafts = service.list_anki_drafts(limit=limit, deck_name=deck_filter)
+        due_cards = service.list_due_anki_cards(limit=due_limit)
+        deck_options = service.list_anki_decks()
+        return templates.TemplateResponse(
+            request,
+            "partials/_anki_panel.html",
+            {
+                "request": request,
+                "active_user": active_username,
+                "drafts": drafts,
+                "due_cards": due_cards,
+                "flash": flash,
+                "import_errors": import_errors or [],
+                "import_json": import_json,
+                "deck_filter": deck_filter,
+                "deck_options": deck_options,
+                "limit": limit,
+                "due_limit": due_limit,
+                "draft_select_all": draft_select_all,
+                "due_select_all": due_select_all,
+            },
+        )
 
     @app.post("/anki/{draft_id}/update", response_class=HTMLResponse)
     async def anki_update(request: Request, draft_id: int) -> HTMLResponse:
@@ -338,15 +400,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             status = service.update_anki_draft(draft_id, front=front, back=back, tags=tags, deck_name=deck)
-            drafts = service.list_anki_drafts(limit=100)
-        return templates.TemplateResponse(request, "partials/_anki_panel.html", {
-            "request": request,
-            "active_user": active_username,
-            "drafts": drafts,
-            "flash": f"update: {status}",
-            "import_errors": [],
-            "import_json": "",
-        })
+            return _anki_panel_response(request, service, flash=f"update: {status}")
 
     @app.post("/anki/{draft_id}/archive", response_class=HTMLResponse)
     def anki_archive(request: Request, draft_id: int) -> HTMLResponse:
@@ -355,15 +409,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             status = service.archive_anki_draft(draft_id)
-            drafts = service.list_anki_drafts(limit=100)
-        return templates.TemplateResponse(request, "partials/_anki_panel.html", {
-            "request": request,
-            "active_user": active_username,
-            "drafts": drafts,
-            "flash": f"archive: {status}",
-            "import_errors": [],
-            "import_json": "",
-        })
+            return _anki_panel_response(request, service, flash=f"archive: {status}")
 
     @app.post("/anki/import-json", response_class=HTMLResponse)
     async def anki_import_json(request: Request) -> HTMLResponse:
@@ -374,23 +420,127 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             result = service.import_anki_json(raw_json)
-            drafts = service.list_anki_drafts(limit=100)
-        if result["ok"]:
-            flash = f"import success: {result['created']}"
-            errors: list[dict[str, Any]] = []
-            kept_json = ""
-        else:
-            flash = f"import failed: {len(result['errors'])}"
-            errors = result["errors"]
-            kept_json = raw_json
-        return templates.TemplateResponse(request, "partials/_anki_panel.html", {
-            "request": request,
-            "active_user": active_username,
-            "drafts": drafts,
-            "flash": flash,
-            "import_errors": errors,
-            "import_json": kept_json,
-        })
+            if result["ok"]:
+                return _anki_panel_response(request, service, flash=f"import success: {result['created']}")
+            return _anki_panel_response(
+                request,
+                service,
+                flash=f"import failed: {len(result['errors'])}",
+                import_errors=result["errors"],
+                import_json=raw_json,
+            )
+
+    @app.post("/anki/batch-activate", response_class=HTMLResponse)
+    @app.post("/anki/activate", response_class=HTMLResponse)
+    async def anki_batch_activate(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        body = await request.body()
+        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        deck_filter = _none_if_blank((parsed.get("deck_filter") or [""])[0])
+        try:
+            limit = int((parsed.get("limit") or ["100"])[0] or "100")
+        except ValueError:
+            limit = 100
+        try:
+            due_limit = int((parsed.get("due_limit") or ["50"])[0] or "50")
+        except ValueError:
+            due_limit = 50
+        draft_select_all = (parsed.get("draft_select_mode") or [""])[0] == "all"
+        due_select_all = (parsed.get("due_select_mode") or [""])[0] == "all"
+        draft_ids: list[int] = []
+        for raw in parsed.get("draft_id", []):
+            token = raw.strip()
+            if not token:
+                continue
+            try:
+                draft_ids.append(int(token))
+            except ValueError:
+                continue
+
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            if not draft_ids:
+                return _anki_panel_response(
+                    request,
+                    service,
+                    flash="batch activate: no draft selected",
+                    deck_filter=deck_filter,
+                    limit=limit,
+                    due_limit=due_limit,
+                    draft_select_all=draft_select_all,
+                    due_select_all=due_select_all,
+                )
+            result = service.activate_anki_drafts(draft_ids=draft_ids)
+            return _anki_panel_response(
+                request,
+                service,
+                flash=(
+                    f"batch activate: activated={result['activated_count']} deduped={result['deduped_count']} "
+                    f"skipped={result['skipped_count']} failed={result['failed_count']}"
+                ),
+                deck_filter=deck_filter,
+                limit=limit,
+                due_limit=due_limit,
+                draft_select_all=draft_select_all,
+                due_select_all=due_select_all,
+            )
+
+    @app.post("/anki/batch-review", response_class=HTMLResponse)
+    async def anki_batch_review(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        body = await request.body()
+        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        deck_filter = _none_if_blank((parsed.get("deck_filter") or [""])[0])
+        try:
+            limit = int((parsed.get("limit") or ["100"])[0] or "100")
+        except ValueError:
+            limit = 100
+        try:
+            due_limit = int((parsed.get("due_limit") or ["50"])[0] or "50")
+        except ValueError:
+            due_limit = 50
+        draft_select_all = (parsed.get("draft_select_mode") or [""])[0] == "all"
+        due_select_all = (parsed.get("due_select_mode") or [""])[0] == "all"
+        rating = ((parsed.get("rating") or ["good"])[0] or "good").strip().lower()
+        card_ids: list[int] = []
+        for raw in parsed.get("card_id", []):
+            token = raw.strip()
+            if not token:
+                continue
+            try:
+                card_ids.append(int(token))
+            except ValueError:
+                continue
+
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            if not card_ids:
+                return _anki_panel_response(
+                    request,
+                    service,
+                    flash="batch review: no due card selected",
+                    deck_filter=deck_filter,
+                    limit=limit,
+                    due_limit=due_limit,
+                    draft_select_all=draft_select_all,
+                    due_select_all=due_select_all,
+                )
+            result = service.review_anki_cards(card_ids=card_ids, rating=rating)
+            return _anki_panel_response(
+                request,
+                service,
+                flash=(
+                    f"batch review: reviewed={result['reviewed_count']} "
+                    f"skipped={result['skipped_count']} failed={result['failed_count']}"
+                ),
+                deck_filter=deck_filter,
+                limit=limit,
+                due_limit=due_limit,
+                draft_select_all=draft_select_all,
+                due_select_all=due_select_all,
+            )
 
 
     @app.get("/anki/review", response_class=HTMLResponse)

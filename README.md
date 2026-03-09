@@ -440,3 +440,16 @@ Web:
 - GET /anki/review shows next due card
 - rating buttons: gain / hard / good / easy`r
 
+
+
+## Web Anki Batch Operations
+
+On `/anki` page:
+- Drafts panel supports deck filter + checkbox selection + batch activate (`/anki/batch-activate`)
+- Due Cards panel supports checkbox selection + batch review (`/anki/batch-review`)
+- Batch activate/review both return summary counts in flash message
+
+CLI remains available:
+- `python -m life_system.main anki activate 1 2 3`
+- `python -m life_system.main anki review-due --limit 20`
+- `python -m life_system.main anki review 1 --rate good`
