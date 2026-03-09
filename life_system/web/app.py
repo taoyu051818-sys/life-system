@@ -43,6 +43,16 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(web_dir / "static")), name="static")
 
+    @app.middleware("http")
+    async def add_security_and_cache_headers(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;"
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        else:
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     def _base_ctx(request: Request) -> dict[str, Any]:
         return {"request": request, "active_user": active_username, "logged_in": _is_authenticated(request)}
 
@@ -454,5 +464,7 @@ def _none_if_blank(value: str | None) -> str | None:
         return None
     out = value.strip()
     return out if out else None
+
+
 
 

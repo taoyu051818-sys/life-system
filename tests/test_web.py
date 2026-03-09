@@ -50,6 +50,25 @@ def test_login_then_access_pages() -> None:
         assert client.get("/anki").status_code == 200
 
 
+
+def test_base_uses_local_htmx_and_security_headers() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/")
+        assert page.status_code == 200
+        assert '/static/js/htmx.min.js' in page.text
+        assert "https://unpkg.com" not in page.text
+        assert "Content-Security-Policy" in page.headers
+        assert "script-src 'self'" in page.headers["Content-Security-Policy"]
+        assert page.headers.get("Cache-Control") == "no-store"
+
+        static_resp = client.get("/static/app.css")
+        assert static_resp.status_code == 200
+        assert static_resp.headers.get("Cache-Control") == "public, max-age=3600"
 def test_quick_journal_activity_write() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         db_path = Path(tmp) / "life.db"
@@ -238,3 +257,4 @@ def test_anki_update_and_archive() -> None:
         with connection_ctx(db_path) as conn:
             status = conn.execute("SELECT status FROM anki_drafts WHERE id=1").fetchone()["status"]
             assert status == "archived"
+
