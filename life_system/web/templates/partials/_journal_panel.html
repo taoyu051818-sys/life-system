@@ -1,52 +1,31 @@
 ﻿{% if rows %}
-  {% if view_mode == "timeline" %}
-  <div class="journal-timeline">
-    {% for row in rows %}
-    <article class="timeline-item">
-      <div class="timeline-time">{{ row.created_at | bj_time }}</div>
-      <div class="timeline-card">
-        <div class="journal-head">
-          <span class="pill">#{{ row.id }}</span>
-          <span class="pill">{{ row.entry_type }}</span>
-        </div>
-        <div class="journal-content">{{ row.content }}</div>
-        <div class="journal-meta muted">
-          E={{ row.energy_level if row.energy_level is not none else '-' }}
-          F={{ row.focus_level if row.focus_level is not none else '-' }}
-          M={{ row.mood_level if row.mood_level is not none else '-' }}
-          task={{ row.related_task_id if row.related_task_id is not none else '-' }}
-          inbox={{ row.related_inbox_id if row.related_inbox_id is not none else '-' }}
-          tags={{ row.tags or '-' }}
-        </div>
-      </div>
-    </article>
-    {% endfor %}
+<div class="journal-grid">
+  {% for row in rows %}
+  <div class="journal-entry">
+    <div class="journal-entry-top">
+      <span class="pill">{{ row.entry_type }}</span>
+      <span class="pill">#{{ row.id }}</span>
+    </div>
+    <div class="journal-entry-time">{{ row.created_at | bj_time }}</div>
+    <div class="journal-entry-content">{{ row.content }}</div>
+
+    <div class="journal-entry-meta muted">
+      <span>E {{ row.energy_level if row.energy_level is not none else '-' }}</span>
+      <span>F {{ row.focus_level if row.focus_level is not none else '-' }}</span>
+      <span>M {{ row.mood_level if row.mood_level is not none else '-' }}</span>
+    </div>
+
+    <div class="journal-entry-meta muted">
+      <span>task {{ row.related_task_id if row.related_task_id is not none else '-' }}</span>
+      <span>inbox {{ row.related_inbox_id if row.related_inbox_id is not none else '-' }}</span>
+    </div>
+
+    {% if row.tags %}
+    <div class="journal-entry-tags muted">tags {{ row.tags }}</div>
+    {% endif %}
   </div>
-  {% else %}
-  <div class="journal-grid d-flex flex-wrap">
-    {% for row in rows %}
-    <article class="journal-item journal-card">
-      <div class="journal-head">
-        <span class="pill">#{{ row.id }}</span>
-        <span class="pill">{{ row.entry_type }}</span>
-      </div>
-      <div class="muted journal-time">{{ row.created_at | bj_time }}</div>
-      <div class="journal-content">{{ row.content }}</div>
-      <div class="journal-meta muted">
-        E={{ row.energy_level if row.energy_level is not none else '-' }}
-        F={{ row.focus_level if row.focus_level is not none else '-' }}
-        M={{ row.mood_level if row.mood_level is not none else '-' }}
-      </div>
-      <div class="journal-meta muted">
-        task={{ row.related_task_id if row.related_task_id is not none else '-' }}
-        inbox={{ row.related_inbox_id if row.related_inbox_id is not none else '-' }}
-      </div>
-      <div class="journal-meta muted">tags={{ row.tags or '-' }}</div>
-    </article>
-    {% endfor %}
-  </div>
-  {% endif %}
+  {% endfor %}
+</div>
 {% else %}
 <div class="muted">no journal entries</div>
 {% endif %}
-
