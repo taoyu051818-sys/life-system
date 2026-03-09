@@ -18,6 +18,7 @@
         <a class="{% if request.url.path.startswith('/journal') %}active{% endif %}" href="/journal">Journal</a>
         <a class="{% if request.url.path.startswith('/anki') and not request.url.path.startswith('/anki/review') %}active{% endif %}" href="/anki">Anki</a>
         <a class="{% if request.url.path.startswith('/anki/review') %}active{% endif %}" href="/anki/review">Anki Review</a>
+        <a class="{% if request.url.path.startswith('/anki/stats') %}active{% endif %}" href="/anki/stats">Anki Stats</a>
       </nav>
       <div class="user-chip">用户: {{ active_user }}</div>
       {% if logged_in %}

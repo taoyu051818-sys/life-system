@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Anki Stats | Life System{% endblock %}
+{% block content %}
+<section class="card stats-page">
+  <div class="review-header">
+    <h1>Anki Stats</h1>
+    <a class="btn small ghost" href="/anki">Back to /anki</a>
+  </div>
+
+  <div class="stats-grid">
+    <article class="stats-card"><div class="muted">Total drafts</div><div class="stats-value">{{ stats.summary.draft_total }}</div></article>
+    <article class="stats-card"><div class="muted">Non-archived drafts</div><div class="stats-value">{{ stats.summary.draft_non_archived }}</div></article>
+    <article class="stats-card"><div class="muted">Active cards</div><div class="stats-value">{{ stats.summary.active_cards_total }}</div></article>
+    <article class="stats-card"><div class="muted">Due now</div><div class="stats-value">{{ stats.summary.due_cards_now }}</div></article>
+  </div>
+
+  <section class="card nested">
+    <h3>Last 7 days</h3>
+    <div class="stats-grid small">
+      <article class="stats-card"><div class="muted">Drafts created</div><div class="stats-value">{{ stats.recent7d.draft_created_7d }}</div></article>
+      <article class="stats-card"><div class="muted">Cards activated</div><div class="stats-value">{{ stats.recent7d.cards_activated_7d }}</div></article>
+      <article class="stats-card"><div class="muted">Reviews</div><div class="stats-value">{{ stats.recent7d.reviews_7d }}</div></article>
+    </div>
+  </section>
+
+  <section class="card nested">
+    <h3>Rating distribution (7d)</h3>
+    <div class="stats-grid small">
+      <article class="stats-card"><div class="muted">again</div><div class="stats-value">{{ stats.rating_distribution.again }}</div></article>
+      <article class="stats-card"><div class="muted">hard</div><div class="stats-value">{{ stats.rating_distribution.hard }}</div></article>
+      <article class="stats-card"><div class="muted">good</div><div class="stats-value">{{ stats.rating_distribution.good }}</div></article>
+      <article class="stats-card"><div class="muted">easy</div><div class="stats-value">{{ stats.rating_distribution.easy }}</div></article>
+    </div>
+  </section>
+
+  <section class="card nested">
+    <h3>Deck breakdown</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>deck</th><th>draft total</th><th>draft non-archived</th><th>active cards</th><th>due cards</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in stats.deck_breakdown %}
+          <tr>
+            <td>{{ row.deck_name }}</td>
+            <td>{{ row.draft_total }}</td>
+            <td>{{ row.draft_non_archived }}</td>
+            <td>{{ row.active_cards }}</td>
+            <td>{{ row.due_cards }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="muted">no stats data</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</section>
+{% endblock %}

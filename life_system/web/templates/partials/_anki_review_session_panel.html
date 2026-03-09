@@ -1,0 +1,53 @@
+<div id="anki-review-session" class="review-session">
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  {% if card %}
+  <div class="review-meta muted">
+    <span>deck={{ card.deck }}</span>
+    <span>due={{ due_count }}</span>
+    <span>card_id={{ card.id }}</span>
+  </div>
+
+  <article class="review-card">
+    <div class="pill">Front</div>
+    <div class="review-front">{{ card.front }}</div>
+  </article>
+
+  {% if revealed %}
+  <article class="review-card answer">
+    <div class="pill">Back</div>
+    <div class="review-back">{{ card.back }}</div>
+  </article>
+
+  <form class="review-rate-grid" hx-post="/anki/review/rate" hx-target="#anki-review-session" hx-swap="outerHTML">
+    <input type="hidden" name="card_id" value="{{ card.id }}" />
+    <input type="hidden" name="deck_name" value="{{ deck_filter or '' }}" />
+    <input type="hidden" name="limit" value="{{ limit or 50 }}" />
+    <button class="btn review-btn again" type="submit" name="rate" value="again">again</button>
+    <button class="btn review-btn hard" type="submit" name="rate" value="hard">hard</button>
+    <button class="btn review-btn good" type="submit" name="rate" value="good">good</button>
+    <button class="btn review-btn easy" type="submit" name="rate" value="easy">easy</button>
+  </form>
+  {% else %}
+  <form hx-post="/anki/review/reveal" hx-target="#anki-review-session" hx-swap="outerHTML">
+    <input type="hidden" name="deck_name" value="{{ deck_filter or '' }}" />
+    <input type="hidden" name="limit" value="{{ limit or 50 }}" />
+    <button class="btn review-reveal" type="submit">Reveal Answer</button>
+  </form>
+  {% endif %}
+
+  {% else %}
+  <article class="card nested">
+    {% if deck_filter %}
+    <h3>No due cards in this deck</h3>
+    <p class="muted">deck={{ deck_filter }}</p>
+    {% else %}
+    <h3>No due cards right now</h3>
+    {% endif %}
+    <div class="focus-bar">
+      <a class="btn small ghost" href="/anki">Back to /anki</a>
+      <a class="btn small ghost" href="/anki/stats">Open /anki/stats</a>
+    </div>
+  </article>
+  {% endif %}
+</div>

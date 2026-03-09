@@ -841,6 +841,43 @@ class AnkiDraftRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def count_all(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_non_archived(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND status != 'archived'",
+            (user_id,),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_created_since(self, user_id: int, start_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def deck_counts(self, user_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(deck_name, ''), 'default') AS deck_name,
+              COUNT(*) AS draft_total,
+              SUM(CASE WHEN status != 'archived' THEN 1 ELSE 0 END) AS draft_non_archived
+            FROM anki_drafts
+            WHERE user_id = ?
+            GROUP BY COALESCE(NULLIF(deck_name, ''), 'default')
+            ORDER BY deck_name ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def list_all(self, user_id: int, only_new: bool = False) -> list[dict[str, Any]]:
         if only_new:
             rows = self.conn.execute(
@@ -1092,7 +1129,7 @@ class AnkiCardRepository:
         ).fetchone()
         return dict(row) if row is not None else None
 
-    def list_due(self, user_id: int, now_iso: str, limit: int) -> list[dict[str, Any]]:
+    def list_due(self, user_id: int, now_iso: str, limit: int, deck_name: str | None = None) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             """
             SELECT
@@ -1103,12 +1140,64 @@ class AnkiCardRepository:
             WHERE user_id = ?
               AND state IN ('new', 'learning', 'review', 'relearning')
               AND due_at <= ?
+              AND (? IS NULL OR deck = ?)
             ORDER BY due_at ASC, id ASC
             LIMIT ?
             """,
-            (user_id, now_iso, limit),
+            (user_id, now_iso, deck_name, deck_name, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def count_all(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_active(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ? AND state != 'archived'",
+            (user_id,),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_due(self, user_id: int, now_iso: str, deck_name: str | None = None) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM anki_cards
+            WHERE user_id = ?
+              AND state IN ('new', 'learning', 'review', 'relearning')
+              AND due_at <= ?
+              AND (? IS NULL OR deck = ?)
+            """,
+            (user_id, now_iso, deck_name, deck_name),
+        ).fetchone()
+        return int(row["c"])
+
+    def count_created_since(self, user_id: int, start_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ? AND created_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def deck_counts(self, user_id: int, now_iso: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(deck, ''), 'default') AS deck_name,
+              COUNT(*) AS active_cards,
+              SUM(CASE WHEN state IN ('new', 'learning', 'review', 'relearning') AND due_at <= ? THEN 1 ELSE 0 END) AS due_cards
+            FROM anki_cards
+            WHERE user_id = ? AND state != 'archived'
+            GROUP BY COALESCE(NULLIF(deck, ''), 'default')
+            ORDER BY deck_name ASC
+            """,
+            (now_iso, user_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def update_review_state(
         self,
@@ -1201,6 +1290,30 @@ class AnkiReviewEventRepository:
         )
         self.conn.commit()
         return int(cur.lastrowid)
+    def count_since(self, user_id: int, start_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_review_events WHERE user_id = ? AND reviewed_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+        return int(row["c"])
+
+    def rating_distribution_since(self, user_id: int, start_iso: str) -> dict[str, int]:
+        rows = self.conn.execute(
+            """
+            SELECT rating, COUNT(*) AS c
+            FROM anki_review_events
+            WHERE user_id = ? AND reviewed_at >= ?
+            GROUP BY rating
+            """,
+            (user_id, start_iso),
+        ).fetchall()
+        result = {"again": 0, "hard": 0, "good": 0, "easy": 0}
+        for row in rows:
+            key = str(row["rating"])
+            if key in result:
+                result[key] = int(row["c"])
+        return result
+
 class JournalRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn

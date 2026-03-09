@@ -453,3 +453,16 @@ CLI remains available:
 - `python -m life_system.main anki activate 1 2 3`
 - `python -m life_system.main anki review-due --limit 20`
 - `python -m life_system.main anki review 1 --rate good`
+
+
+## Web Anki Review & Stats
+
+- `GET /anki/review`: one-card-at-a-time review session
+  - optional filter: `?deck_name=default`
+  - reveal answer: `POST /anki/review/reveal`
+  - rate card: `POST /anki/review/rate` with `again|hard|good|easy`
+- `GET /anki/stats`: lightweight dashboard
+  - summary: draft total, non-archived drafts, active cards, due now
+  - recent 7 days: drafts created, cards activated, review count
+  - rating distribution: again/hard/good/easy
+  - deck breakdown: draft and due pressure by deck

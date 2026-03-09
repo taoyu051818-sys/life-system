@@ -544,46 +544,125 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
 
     @app.get("/anki/review", response_class=HTMLResponse)
-    def anki_review_page(request: Request, limit: int = Query(20, ge=1, le=100)) -> HTMLResponse:
+    def anki_review_page(
+        request: Request,
+        deck_name: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=200),
+    ) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        deck_filter = _none_if_blank(deck_name)
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
-            due_cards = service.list_due_anki_cards(limit=limit)
+            due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
+            deck_options = service.list_anki_decks()
         card = due_cards[0] if due_cards else None
         ctx = _base_ctx(request)
-        ctx.update({"card": card, "due_count": len(due_cards), "flash": None})
+        ctx.update(
+            {
+                "card": card,
+                "due_count": len(due_cards),
+                "total_due": len(due_cards),
+                "revealed": False,
+                "flash": None,
+                "deck_filter": deck_filter,
+                "deck_options": deck_options,
+                "limit": limit,
+                "session_done": False,
+            }
+        )
         return templates.TemplateResponse(request, "anki_review.html", ctx)
 
-    @app.post("/anki/review/{card_id}", response_class=HTMLResponse)
-    async def anki_review_action(request: Request, card_id: int) -> HTMLResponse:
+    @app.post("/anki/review/reveal", response_class=HTMLResponse)
+    async def anki_review_reveal(request: Request) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
-        rating = (form.get("rate") or "").strip()
+        deck_filter = _none_if_blank(form.get("deck_name"))
+        try:
+            limit = int(form.get("limit") or "50")
+        except ValueError:
+            limit = 50
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
-            flash = None
-            try:
-                updated = service.review_anki_card(card_id=card_id, rating=rating)
-            except ValueError:
-                updated = None
-                flash = "invalid rating"
-            if updated is None and flash is None:
-                flash = "anki card not found"
-            due_cards = service.list_due_anki_cards(limit=20)
+            due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
         card = due_cards[0] if due_cards else None
         return templates.TemplateResponse(
             request,
-            "partials/_anki_review_panel.html",
+            "partials/_anki_review_session_panel.html",
             {
                 "request": request,
                 "active_user": active_username,
                 "card": card,
                 "due_count": len(due_cards),
-                "flash": flash or f"reviewed with {rating}",
+                "total_due": len(due_cards),
+                "revealed": True,
+                "flash": None,
+                "deck_filter": deck_filter,
+                "limit": limit,
+                "session_done": card is None,
             },
         )
+
+    @app.post("/anki/review/rate", response_class=HTMLResponse)
+    async def anki_review_rate(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        rating = (form.get("rate") or "").strip().lower()
+        deck_filter = _none_if_blank(form.get("deck_name"))
+        try:
+            limit = int(form.get("limit") or "50")
+        except ValueError:
+            limit = 50
+        try:
+            card_id = int(form.get("card_id") or "0")
+        except ValueError:
+            card_id = 0
+
+        flash = None
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            if card_id <= 0:
+                flash = "invalid card id"
+            else:
+                try:
+                    updated = service.review_anki_card(card_id=card_id, rating=rating)
+                except ValueError:
+                    updated = None
+                    flash = "invalid rating"
+                if updated is None and flash is None:
+                    flash = "anki card not found"
+            due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
+        card = due_cards[0] if due_cards else None
+        return templates.TemplateResponse(
+            request,
+            "partials/_anki_review_session_panel.html",
+            {
+                "request": request,
+                "active_user": active_username,
+                "card": card,
+                "due_count": len(due_cards),
+                "total_due": len(due_cards),
+                "revealed": False,
+                "flash": flash or f"rated: {rating}",
+                "deck_filter": deck_filter,
+                "limit": limit,
+                "session_done": card is None,
+            },
+        )
+
+    @app.get("/anki/stats", response_class=HTMLResponse)
+    def anki_stats_page(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            stats = service.build_anki_stats()
+        ctx = _base_ctx(request)
+        ctx.update({"stats": stats})
+        return templates.TemplateResponse(request, "anki_stats.html", ctx)
+
     return app
 
 

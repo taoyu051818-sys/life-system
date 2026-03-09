@@ -276,10 +276,16 @@ def test_anki_review_page_and_rate_flow() -> None:
         page = client.get("/anki/review")
         assert page.status_code == 200
         assert "Q1" in page.text
+        assert "A1" not in page.text
 
-        resp = client.post("/anki/review/1", data={"rate": "good"})
+        reveal = client.post("/anki/review/reveal", data={"deck_name": "", "limit": "50"})
+        assert reveal.status_code == 200
+        assert "A1" in reveal.text
+        assert "again" in reveal.text
+
+        resp = client.post("/anki/review/rate", data={"card_id": "1", "rate": "good", "deck_name": "", "limit": "50"})
         assert resp.status_code == 200
-        assert "no due cards" in resp.text
+        assert "No due cards right now" in resp.text
 
         with connection_ctx(db_path) as conn:
             card = conn.execute("SELECT state, reps FROM anki_cards WHERE id=1").fetchone()
@@ -408,3 +414,61 @@ def test_web_anki_batch_activate_under_deck_filter_only_selected_processed() -> 
             rows = conn.execute("SELECT draft_id FROM anki_cards ORDER BY id ASC").fetchall()
             ids = [r[0] for r in rows]
             assert ids == [1]
+
+
+def test_anki_review_empty_state() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        client = _build_client(db_path)
+        _login(client)
+        page = client.get("/anki/review")
+        assert page.status_code == 200
+        assert "No due cards right now" in page.text
+
+
+def test_anki_review_deck_filter() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q-default", "A1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q-eco", "A2", "--deck-name", "economics"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1", "2"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/anki/review?deck_name=economics")
+        assert page.status_code == 200
+        assert "Q-eco" in page.text
+        assert "Q-default" not in page.text
+
+
+def test_anki_stats_page_with_data() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1"])
+        run_cli(["--db", str(db_path), "anki", "review", "1", "--rate", "good"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/anki/stats")
+        assert page.status_code == 200
+        assert "Anki Stats" in page.text
+        assert "Total drafts" in page.text
+        assert "Rating distribution" in page.text
+        assert "default" in page.text
+
+
+def test_anki_stats_page_empty() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/anki/stats")
+        assert page.status_code == 200
+        assert "Anki Stats" in page.text
+        assert "0" in page.text

@@ -647,9 +647,14 @@ class LifeSystemService:
         self.event_logger.log("anki_drafts_activated", result)
         return result
 
-    def list_due_anki_cards(self, limit: int = 20, now: str | None = None) -> list[dict[str, Any]]:
+    def list_due_anki_cards(
+        self,
+        limit: int = 20,
+        now: str | None = None,
+        deck_name: str | None = None,
+    ) -> list[dict[str, Any]]:
         now_iso = now or now_utc_iso()
-        return self.anki_card_repo.list_due(user_id=self.user_id, now_iso=now_iso, limit=limit)
+        return self.anki_card_repo.list_due(user_id=self.user_id, now_iso=now_iso, limit=limit, deck_name=deck_name)
 
     def review_anki_card(self, card_id: int, rating: str, now: str | None = None) -> dict[str, Any] | None:
         rating_norm = rating.strip().lower()
@@ -768,6 +773,61 @@ class LifeSystemService:
             "skipped_count": skipped,
             "failed_count": failed,
             "reviewed_card_ids": reviewed_ids,
+        }
+
+    def build_anki_stats(self, now: str | None = None) -> dict[str, Any]:
+        now_iso = now or now_utc_iso()
+        now_dt = self._parse_iso(now_iso)
+        seven_days_ago_iso = self._to_iso(now_dt - timedelta(days=7))
+
+        summary = {
+            "draft_total": self.anki_repo.count_all(self.user_id),
+            "draft_non_archived": self.anki_repo.count_non_archived(self.user_id),
+            "active_cards_total": self.anki_card_repo.count_active(self.user_id),
+            "due_cards_now": self.anki_card_repo.count_due(self.user_id, now_iso),
+        }
+
+        recent7d = {
+            "draft_created_7d": self.anki_repo.count_created_since(self.user_id, seven_days_ago_iso),
+            "cards_activated_7d": self.anki_card_repo.count_created_since(self.user_id, seven_days_ago_iso),
+            "reviews_7d": self.anki_review_event_repo.count_since(self.user_id, seven_days_ago_iso),
+        }
+
+        rating_distribution = self.anki_review_event_repo.rating_distribution_since(self.user_id, seven_days_ago_iso)
+
+        deck_rows_draft = self.anki_repo.deck_counts(self.user_id)
+        deck_rows_card = self.anki_card_repo.deck_counts(self.user_id, now_iso)
+        merged: dict[str, dict[str, Any]] = {}
+        for row in deck_rows_draft:
+            deck_name = str(row.get("deck_name") or "default")
+            merged[deck_name] = {
+                "deck_name": deck_name,
+                "draft_total": int(row.get("draft_total") or 0),
+                "draft_non_archived": int(row.get("draft_non_archived") or 0),
+                "active_cards": 0,
+                "due_cards": 0,
+            }
+        for row in deck_rows_card:
+            deck_name = str(row.get("deck_name") or "default")
+            if deck_name not in merged:
+                merged[deck_name] = {
+                    "deck_name": deck_name,
+                    "draft_total": 0,
+                    "draft_non_archived": 0,
+                    "active_cards": 0,
+                    "due_cards": 0,
+                }
+            merged[deck_name]["active_cards"] = int(row.get("active_cards") or 0)
+            merged[deck_name]["due_cards"] = int(row.get("due_cards") or 0)
+
+        deck_breakdown = [merged[k] for k in sorted(merged)]
+
+        return {
+            "generated_at": now_iso,
+            "summary": summary,
+            "recent7d": recent7d,
+            "rating_distribution": rating_distribution,
+            "deck_breakdown": deck_breakdown,
         }
 
     def import_anki_json(self, raw_json: str) -> dict[str, Any]:
