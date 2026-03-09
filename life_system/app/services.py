@@ -1,4 +1,4 @@
-﻿import json
+import json
 import sqlite3
 from csv import DictWriter
 from datetime import datetime, timedelta, timezone
@@ -542,8 +542,38 @@ class LifeSystemService:
     def list_anki_drafts(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         return self.anki_repo.list(user_id=self.user_id, status=status, limit=limit)
 
-    def export_anki_drafts_csv(self, output_path: str) -> int:
-        rows = self.anki_repo.list_all(user_id=self.user_id)
+    def show_anki_draft(self, draft_id: int) -> dict[str, Any] | None:
+        return self.anki_repo.get_with_trace(user_id=self.user_id, draft_id=draft_id)
+
+    def archive_anki_draft(self, draft_id: int) -> str:
+        status = self.anki_repo.archive(user_id=self.user_id, draft_id=draft_id)
+        if status == "archived":
+            self.event_logger.log("anki_draft_archived", {"draft_id": draft_id})
+        return status
+
+    def update_anki_draft(
+        self,
+        draft_id: int,
+        front: str | None = None,
+        back: str | None = None,
+        tags: str | None = None,
+        deck_name: str | None = None,
+    ) -> str:
+        status = self.anki_repo.update_fields(
+            user_id=self.user_id,
+            draft_id=draft_id,
+            front=front,
+            back=back,
+            tags=tags,
+            deck_name=deck_name,
+        )
+        if status == "updated":
+            changed = [k for k, v in {"front": front, "back": back, "tags": tags, "deck_name": deck_name}.items() if v is not None]
+            self.event_logger.log("anki_draft_updated", {"draft_id": draft_id, "fields": changed})
+        return status
+
+    def export_anki_drafts_csv(self, output_path: str, only_new: bool = False) -> int:
+        rows = self.anki_repo.list_all(user_id=self.user_id, only_new=only_new)
         path = Path(output_path)
         if path.parent != Path("."):
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -557,13 +587,19 @@ class LifeSystemService:
             "tags",
             "status",
             "created_at",
+            "exported_at",
         ]
         with path.open("w", encoding="utf-8", newline="") as f:
             writer = DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             writer.writerows(rows)
-        self.anki_repo.mark_exported_for_user(user_id=self.user_id, exported_at=now_utc_iso())
-        self.event_logger.log("anki_drafts_exported_csv", {"path": str(path), "count": len(rows)})
+        draft_ids = [int(row["id"]) for row in rows if str(row.get("status")) in {"draft", "ready", "failed"}]
+        exported_at = now_utc_iso()
+        self.anki_repo.mark_exported_by_ids(user_id=self.user_id, draft_ids=draft_ids, exported_at=exported_at)
+        self.event_logger.log(
+            "anki_drafts_exported_csv",
+            {"path": str(path), "count": len(rows), "only_new": only_new, "marked_exported": len(draft_ids)},
+        )
         return len(rows)
 
     def add_journal_entry(

@@ -794,7 +794,7 @@ class AnkiDraftRepository:
         if status:
             rows = self.conn.execute(
                 """
-                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
+                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
                 FROM anki_drafts
                 WHERE user_id = ? AND status = ?
                 ORDER BY id DESC
@@ -805,7 +805,7 @@ class AnkiDraftRepository:
         else:
             rows = self.conn.execute(
                 """
-                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
+                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
                 FROM anki_drafts
                 WHERE user_id = ?
                 ORDER BY id DESC
@@ -815,17 +815,156 @@ class AnkiDraftRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def list_all(self, user_id: int) -> list[dict[str, Any]]:
-        rows = self.conn.execute(
-            """
-            SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at
-            FROM anki_drafts
-            WHERE user_id = ?
-            ORDER BY id ASC
-            """,
-            (user_id,),
-        ).fetchall()
+    def list_all(self, user_id: int, only_new: bool = False) -> list[dict[str, Any]]:
+        if only_new:
+            rows = self.conn.execute(
+                """
+                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
+                FROM anki_drafts
+                WHERE user_id = ? AND status IN ('draft', 'ready', 'failed')
+                ORDER BY id ASC
+                """,
+                (user_id,),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                """
+                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
+                FROM anki_drafts
+                WHERE user_id = ?
+                ORDER BY id ASC
+                """,
+                (user_id,),
+            ).fetchall()
         return [dict(row) for row in rows]
+
+    def get_with_trace(self, user_id: int, draft_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              d.id, d.user_id, d.source_type, d.source_id, d.deck_name, d.front, d.back, d.tags, d.status,
+              d.created_at, d.exported_at,
+              i.id AS source_inbox_item_id,
+              i.source_journal_entry_id AS source_journal_entry_id,
+              i.source AS source_inbox_source,
+              i.created_by AS source_inbox_created_by,
+              i.rule_name AS source_inbox_rule_name,
+              i.rule_version AS source_inbox_rule_version,
+              i.created_at AS source_inbox_created_at,
+              j.id AS source_journal_id,
+              j.entry_type AS source_journal_entry_type,
+              j.created_at AS source_journal_created_at,
+              te.id AS source_triage_event_id,
+              te.created_by AS source_triage_created_by,
+              te.created_at AS source_triage_created_at
+            FROM anki_drafts d
+            LEFT JOIN inbox_items i
+              ON d.source_type = 'inbox'
+              AND d.source_id = i.id
+              AND i.user_id = d.user_id
+            LEFT JOIN journal_entries j
+              ON i.source_journal_entry_id = j.id
+              AND j.user_id = d.user_id
+            LEFT JOIN triage_events te
+              ON te.user_id = d.user_id
+              AND te.inbox_item_id = i.id
+              AND te.target_type = 'anki'
+              AND te.target_id = d.id
+            WHERE d.user_id = ? AND d.id = ?
+            ORDER BY te.id DESC
+            LIMIT 1
+            """,
+            (user_id, draft_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    def archive(self, user_id: int, draft_id: int) -> str:
+        row = self.conn.execute(
+            """
+            SELECT status
+            FROM anki_drafts
+            WHERE user_id = ? AND id = ?
+            """,
+            (user_id, draft_id),
+        ).fetchone()
+        if row is None:
+            return "not_found"
+        if row["status"] == "archived":
+            return "already_archived"
+        self.conn.execute(
+            """
+            UPDATE anki_drafts
+            SET status = 'archived'
+            WHERE user_id = ? AND id = ?
+            """,
+            (user_id, draft_id),
+        )
+        self.conn.commit()
+        return "archived"
+
+    def update_fields(
+        self,
+        user_id: int,
+        draft_id: int,
+        front: str | None = None,
+        back: str | None = None,
+        tags: str | None = None,
+        deck_name: str | None = None,
+    ) -> str:
+        row = self.conn.execute(
+            """
+            SELECT id
+            FROM anki_drafts
+            WHERE user_id = ? AND id = ?
+            """,
+            (user_id, draft_id),
+        ).fetchone()
+        if row is None:
+            return "not_found"
+
+        updates: dict[str, Any] = {}
+        if front is not None:
+            updates["front"] = front
+        if back is not None:
+            updates["back"] = back
+        if tags is not None:
+            updates["tags"] = tags
+        if deck_name is not None:
+            updates["deck_name"] = deck_name
+
+        if not updates:
+            return "no_fields"
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        params: list[Any] = [*updates.values(), user_id, draft_id]
+        self.conn.execute(
+            f"""
+            UPDATE anki_drafts
+            SET {set_clause}
+            WHERE user_id = ? AND id = ?
+            """,
+            params,
+        )
+        self.conn.commit()
+        return "updated"
+
+    def mark_exported_by_ids(self, user_id: int, draft_ids: list[int], exported_at: str) -> int:
+        if not draft_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in draft_ids)
+        params: list[Any] = [exported_at, user_id, *draft_ids]
+        cur = self.conn.execute(
+            f"""
+            UPDATE anki_drafts
+            SET status = 'exported', exported_at = ?
+            WHERE user_id = ? AND id IN ({placeholders}) AND status IN ('draft', 'ready', 'failed')
+            """,
+            params,
+        )
+        self.conn.commit()
+        return cur.rowcount
 
     def mark_exported_for_user(self, user_id: int, exported_at: str) -> int:
         cur = self.conn.execute(
@@ -866,7 +1005,6 @@ class AnkiDraftRepository:
             (user_id, start_iso, end_iso),
         ).fetchone()
         return int(row["c"])
-
 
 class JournalRepository:
     def __init__(self, conn: sqlite3.Connection):

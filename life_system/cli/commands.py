@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import json
 import os
 import re
@@ -127,9 +127,19 @@ def build_parser() -> argparse.ArgumentParser:
     anki_list = anki_sub.add_parser("list")
     anki_list.add_argument("--status", default=None)
     anki_list.add_argument("--limit", type=int, default=50)
+    anki_update = anki_sub.add_parser("update")
+    anki_update.add_argument("draft_id", type=int)
+    anki_update.add_argument("--front", default=None)
+    anki_update.add_argument("--back", default=None)
+    anki_update.add_argument("--tags", default=None)
+    anki_update.add_argument("--deck", default=None)
+    anki_show = anki_sub.add_parser("show")
+    anki_show.add_argument("draft_id", type=int)
+    anki_archive = anki_sub.add_parser("archive")
+    anki_archive.add_argument("draft_id", type=int)
     anki_export = anki_sub.add_parser("export-csv")
     anki_export.add_argument("path")
-
+    anki_export.add_argument("--only-new", action="store_true")
     journal = subparsers.add_parser("journal", help="Record activity/reflection/wins/checkins")
     journal_sub = journal.add_subparsers(dest="action", required=True)
     journal_add = journal_sub.add_parser("add", help="Add a journal entry")
@@ -805,13 +815,78 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         items = service.list_anki_drafts(status=args.status, limit=args.limit)
         for item in items:
             print(
-                f"{item['id']}\t{item['status']}\t{item['deck_name']}\t{item['source_type']}:{item['source_id']}"
+                f"[{item['id']}] 状态(status)={item['status']} | 牌组(deck)={item['deck_name']} | 来源(source)={item['source_type']}:{item['source_id']} | 导出时间(exported_at)={_fmt_optional(item.get('exported_at'))}"
             )
         return 0
 
+    if entity == "anki" and action == "update":
+        if args.front is None and args.back is None and args.tags is None and args.deck is None:
+            print("no fields to update: use --front/--back/--tags/--deck")
+            return 1
+        status = service.update_anki_draft(
+            args.draft_id,
+            front=args.front,
+            back=args.back,
+            tags=args.tags,
+            deck_name=args.deck,
+        )
+        if status == "updated":
+            print("anki draft updated")
+            return 0
+        if status == "not_found":
+            print("anki draft not found")
+            return 1
+        print("no fields to update: use --front/--back/--tags/--deck")
+        return 1
+
+    if entity == "anki" and action == "show":
+        item = service.show_anki_draft(args.draft_id)
+        if item is None:
+            print("anki draft not found")
+            return 1
+        print("== Anki 草稿详情 (draft detail) ==")
+        fields = [
+            "id",
+            "status",
+            "deck_name",
+            "source_type",
+            "source_id",
+            "created_at",
+            "exported_at",
+            "source_inbox_item_id",
+            "source_journal_entry_id",
+            "source_inbox_source",
+            "source_inbox_created_by",
+            "source_inbox_rule_name",
+            "source_inbox_rule_version",
+            "source_inbox_created_at",
+            "source_journal_id",
+            "source_journal_entry_type",
+            "source_journal_created_at",
+            "source_triage_event_id",
+            "source_triage_created_by",
+            "source_triage_created_at",
+            "front",
+            "back",
+            "tags",
+        ]
+        _print_kv_block(item, fields)
+        return 0
+
+    if entity == "anki" and action == "archive":
+        status = service.archive_anki_draft(args.draft_id)
+        if status == "archived":
+            print("anki draft archived")
+            return 0
+        if status == "already_archived":
+            print("anki draft already archived")
+            return 0
+        print("anki draft not found")
+        return 1
+
     if entity == "anki" and action == "export-csv":
-        count = service.export_anki_drafts_csv(args.path)
-        print(f"anki drafts exported: count={count} path={args.path}")
+        count = service.export_anki_drafts_csv(args.path, only_new=args.only_new)
+        print(f"anki drafts exported: count={count} path={args.path} only_new={args.only_new}")
         return 0
 
     if entity == "journal" and action == "add":
@@ -859,6 +934,3 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     parser = build_parser()
     parser.print_help()
     return 1
-
-
-
