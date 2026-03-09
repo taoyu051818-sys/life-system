@@ -120,14 +120,19 @@ def create_app(db_path: str | None = None) -> FastAPI:
         )
 
     @app.get("/journal", response_class=HTMLResponse)
-    def journal_page(request: Request, limit: int = Query(50, ge=1, le=500)) -> HTMLResponse:
+    def journal_page(
+        request: Request,
+        limit: int = Query(50, ge=1, le=500),
+        view: str = Query("cards"),
+    ) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        view_mode = "timeline" if view == "timeline" else "cards"
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             rows = service.list_journal(limit=limit)
         ctx = _base_ctx(request)
-        ctx.update({"rows": rows, "limit": limit})
+        ctx.update({"rows": rows, "limit": limit, "view_mode": view_mode})
         return templates.TemplateResponse(request, "journal.html", ctx)
 
     @app.get("/inbox", response_class=HTMLResponse)
@@ -449,3 +454,5 @@ def _none_if_blank(value: str | None) -> str | None:
         return None
     out = value.strip()
     return out if out else None
+
+

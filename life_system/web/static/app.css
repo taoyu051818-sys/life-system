@@ -69,3 +69,100 @@ textarea { width: 100%; border: 1px solid var(--line); border-radius: 6px; paddi
 .json-sample { background: #111827; color: #e5e7eb; border-radius: 8px; padding: 10px; overflow: auto; font-size: 12px; }
 .error-box { border: 1px solid #fca5a5; background: #fef2f2; padding: 8px; border-radius: 8px; color: #991b1b; }
 .stack-form.compact { gap: 6px; margin: 0 0 8px 0; }
+
+.nav { display: flex; gap: 6px; flex-wrap: wrap; }
+.nav a {
+  margin-right: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--brand);
+  text-decoration: none;
+}
+.nav a.active {
+  background: #ccfbf1;
+  color: #115e59;
+  font-weight: 600;
+}
+
+.d-flex { display: flex; }
+.flex-wrap { flex-wrap: wrap; }
+
+.journal-page { padding: 18px; }
+.journal-header {
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.journal-view-switch { gap: 8px; }
+.btn.is-active {
+  background: #0f766e;
+  color: #fff;
+  border-color: #0f766e;
+}
+
+.journal-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+@media (min-width: 768px) {
+  .journal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 1200px) {
+  .journal-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.journal-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+  min-height: 170px;
+}
+.journal-time {
+  font-size: 12px;
+  margin: 2px 0 8px 0;
+}
+
+.journal-timeline {
+  border-left: 2px solid #dbe3ea;
+  margin-left: 8px;
+  padding-left: 14px;
+  display: grid;
+  gap: 12px;
+}
+.timeline-item {
+  display: grid;
+  grid-template-columns: minmax(130px, 170px) 1fr;
+  gap: 12px;
+  align-items: start;
+  position: relative;
+}
+.timeline-item::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  background: #0f766e;
+  border-radius: 50%;
+  position: absolute;
+  left: -19px;
+  top: 7px;
+}
+.timeline-time {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.timeline-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+}
+@media (max-width: 820px) {
+  .timeline-item { grid-template-columns: 1fr; }
+  .timeline-time { margin-bottom: 2px; }
+}
+

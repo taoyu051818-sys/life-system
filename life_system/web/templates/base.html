@@ -11,12 +11,12 @@
     <header class="topbar">
       <div class="brand">Life System</div>
       <nav class="nav">
-        <a href="/">首页</a>
-        <a href="/inbox">Inbox Review</a>
-        <a href="/tasks">Tasks</a>
-        <a href="/reminders">Reminders</a>
-        <a href="/journal">Journal</a>
-        <a href="/anki">Anki</a>
+        <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">首页</a>
+        <a class="{% if request.url.path.startswith('/inbox') %}active{% endif %}" href="/inbox">Inbox Review</a>
+        <a class="{% if request.url.path.startswith('/tasks') %}active{% endif %}" href="/tasks">Tasks</a>
+        <a class="{% if request.url.path.startswith('/reminders') %}active{% endif %}" href="/reminders">Reminders</a>
+        <a class="{% if request.url.path.startswith('/journal') %}active{% endif %}" href="/journal">Journal</a>
+        <a class="{% if request.url.path.startswith('/anki') %}active{% endif %}" href="/anki">Anki</a>
       </nav>
       <div class="user-chip">用户: {{ active_user }}</div>
       {% if logged_in %}
@@ -30,3 +30,4 @@
     </main>
   </body>
 </html>
+

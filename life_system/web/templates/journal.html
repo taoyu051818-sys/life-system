@@ -1,9 +1,18 @@
 ﻿{% extends "base.html" %}
 {% block title %}Journal | Life System{% endblock %}
 {% block content %}
-<section class="card">
-  <h1>Journal</h1>
-  <p class="muted">history (limit={{ limit }})</p>
+<section class="card journal-page">
+  <div class="journal-header d-flex flex-wrap">
+    <div>
+      <h1>Journal</h1>
+      <p class="muted">history (limit={{ limit }})</p>
+    </div>
+    <div class="journal-view-switch d-flex">
+      <a class="btn small ghost {% if view_mode == 'cards' %}is-active{% endif %}" href="/journal?limit={{ limit }}&view=cards">卡片视图</a>
+      <a class="btn small ghost {% if view_mode == 'timeline' %}is-active{% endif %}" href="/journal?limit={{ limit }}&view=timeline">时间线视图</a>
+    </div>
+  </div>
   {% include "partials/_journal_panel.html" %}
 </section>
 {% endblock %}
+
