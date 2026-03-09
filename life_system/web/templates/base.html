@@ -16,7 +16,8 @@
         <a class="{% if request.url.path.startswith('/tasks') %}active{% endif %}" href="/tasks">Tasks</a>
         <a class="{% if request.url.path.startswith('/reminders') %}active{% endif %}" href="/reminders">Reminders</a>
         <a class="{% if request.url.path.startswith('/journal') %}active{% endif %}" href="/journal">Journal</a>
-        <a class="{% if request.url.path.startswith('/anki') %}active{% endif %}" href="/anki">Anki</a>
+        <a class="{% if request.url.path.startswith('/anki') and not request.url.path.startswith('/anki/review') %}active{% endif %}" href="/anki">Anki</a>
+        <a class="{% if request.url.path.startswith('/anki/review') %}active{% endif %}" href="/anki/review">Anki Review</a>
       </nav>
       <div class="user-chip">用户: {{ active_user }}</div>
       {% if logged_in %}
@@ -30,5 +31,3 @@
     </main>
   </body>
 </html>
-
-

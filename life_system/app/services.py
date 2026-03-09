@@ -2,6 +2,7 @@ import json
 import sqlite3
 from csv import DictWriter
 from datetime import datetime, timedelta, timezone
+import re
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,9 @@ from life_system.domain.ports import EventLogger, NullEventLogger
 from life_system.infra.db import now_utc_iso
 from life_system.infra.repositories import (
     AbandonmentLogRepository,
+    AnkiCardRepository,
     AnkiDraftRepository,
+    AnkiReviewEventRepository,
     AppStateRepository,
     InboxFeedbackSignalRepository,
     InboxRepository,
@@ -45,6 +48,8 @@ class LifeSystemService:
         self.reminder_event_repo = ReminderEventRepository(conn)
         self.abandon_repo = AbandonmentLogRepository(conn)
         self.anki_repo = AnkiDraftRepository(conn)
+        self.anki_card_repo = AnkiCardRepository(conn)
+        self.anki_review_event_repo = AnkiReviewEventRepository(conn)
         self.journal_repo = JournalRepository(conn)
         self.triage_event_repo = TriageEventRepository(conn)
         self.feedback_repo = InboxFeedbackSignalRepository(conn)
@@ -526,6 +531,7 @@ class LifeSystemService:
         deck_name: str = "inbox",
         tags: str | None = None,
     ) -> int:
+        created_at = now_utc_iso()
         draft_id = self.anki_repo.create(
             user_id=self.user_id,
             source_type=source_type,
@@ -534,7 +540,15 @@ class LifeSystemService:
             front=front,
             back=back,
             tags=tags,
-            created_at=now_utc_iso(),
+            created_at=created_at,
+        )
+        self._ensure_anki_card(
+            draft_id=draft_id,
+            front=front,
+            back=back,
+            tags=tags,
+            deck=deck_name,
+            created_at=created_at,
         )
         self.event_logger.log("anki_draft_created", {"draft_id": draft_id, "source_type": source_type})
         return draft_id
@@ -571,6 +585,101 @@ class LifeSystemService:
             changed = [k for k, v in {"front": front, "back": back, "tags": tags, "deck_name": deck_name}.items() if v is not None]
             self.event_logger.log("anki_draft_updated", {"draft_id": draft_id, "fields": changed})
         return status
+
+    def list_due_anki_cards(self, limit: int = 20, now: str | None = None) -> list[dict[str, Any]]:
+        now_iso = now or now_utc_iso()
+        return self.anki_card_repo.list_due(user_id=self.user_id, now_iso=now_iso, limit=limit)
+
+    def review_anki_card(self, card_id: int, rating: str, now: str | None = None) -> dict[str, Any] | None:
+        rating_norm = rating.strip().lower()
+        if rating_norm not in {"again", "hard", "good", "easy"}:
+            raise ValueError("invalid rating")
+
+        card = self.anki_card_repo.get(user_id=self.user_id, card_id=card_id)
+        if card is None:
+            return None
+
+        now_iso = now or now_utc_iso()
+        now_dt = self._parse_iso(now_iso)
+        state_before = str(card.get("state") or "new")
+        due_before = str(card.get("due_at")) if card.get("due_at") else None
+        interval_before = int(card.get("interval_days") or 0)
+        ease_before = float(card.get("ease_factor") or 2.5)
+        reps_before = int(card.get("reps") or 0)
+        lapses_before = int(card.get("lapses") or 0)
+        learning_step_before = int(card.get("learning_step") or 0)
+
+        next_state = state_before
+        next_due = now_dt
+        next_interval = interval_before
+        next_ease = ease_before
+        next_reps = reps_before + 1
+        next_lapses = lapses_before
+        next_learning_step = learning_step_before
+
+        if state_before in {"new", "learning"}:
+            next_state, next_due, next_interval, next_ease, next_learning_step = self._anki_transition_new_or_learning(
+                rating_norm, now_dt, ease_before
+            )
+        elif state_before in {"review", "relearning"}:
+            (
+                next_state,
+                next_due,
+                next_interval,
+                next_ease,
+                next_lapses,
+                next_learning_step,
+            ) = self._anki_transition_review_or_relearning(
+                rating=rating_norm,
+                now_dt=now_dt,
+                interval_days=interval_before,
+                ease_factor=ease_before,
+                lapses=lapses_before,
+                state_before=state_before,
+            )
+        elif state_before == "archived":
+            return None
+        else:
+            next_state, next_due, next_interval, next_ease, next_learning_step = self._anki_transition_new_or_learning(
+                rating_norm, now_dt, ease_before
+            )
+
+        due_after = self._to_iso(next_due)
+        updated = self.anki_card_repo.update_review_state(
+            user_id=self.user_id,
+            card_id=card_id,
+            state=next_state,
+            due_at=due_after,
+            last_reviewed_at=now_iso,
+            interval_days=next_interval,
+            ease_factor=next_ease,
+            reps=next_reps,
+            lapses=next_lapses,
+            learning_step=next_learning_step,
+            updated_at=now_iso,
+        )
+        if updated <= 0:
+            return None
+
+        self.anki_review_event_repo.create(
+            user_id=self.user_id,
+            card_id=card_id,
+            rating=rating_norm,
+            state_before=state_before,
+            state_after=next_state,
+            due_before=due_before,
+            due_after=due_after,
+            interval_before=interval_before,
+            interval_after=next_interval,
+            ease_before=ease_before,
+            ease_after=next_ease,
+            reviewed_at=now_iso,
+        )
+        self.event_logger.log(
+            "anki_card_reviewed",
+            {"card_id": card_id, "rating": rating_norm, "state_before": state_before, "state_after": next_state},
+        )
+        return self.anki_card_repo.get(user_id=self.user_id, card_id=card_id)
 
     def import_anki_json(self, raw_json: str) -> dict[str, Any]:
         text = raw_json.strip()
@@ -945,6 +1054,103 @@ class LifeSystemService:
             stats["created_signals"] += 1
         else:
             stats["skipped_existing"] += 1
+
+
+    def _normalize_anki_text(self, value: str) -> str:
+        return re.sub(r"\s+", " ", value.strip().lower())
+
+    def _anki_dedupe_key(self, front: str, back: str, deck: str) -> str:
+        return "|".join(
+            [
+                self._normalize_anki_text(front),
+                self._normalize_anki_text(back),
+                self._normalize_anki_text(deck),
+            ]
+        )
+
+    def _ensure_anki_card(
+        self,
+        draft_id: int,
+        front: str,
+        back: str,
+        tags: str | None,
+        deck: str,
+        created_at: str,
+    ) -> int | None:
+        dedupe_key = self._anki_dedupe_key(front=front, back=back, deck=deck)
+        existing = self.anki_card_repo.find_by_dedupe_key(user_id=self.user_id, dedupe_key=dedupe_key)
+        if existing is not None:
+            self._nonfatal_warnings.append(
+                f"anki_card_duplicate_detected existing_card_id={existing['id']} draft_id={draft_id}"
+            )
+            return None
+        return self.anki_card_repo.create(
+            user_id=self.user_id,
+            draft_id=draft_id,
+            front=front,
+            back=back,
+            tags=tags,
+            deck=deck,
+            dedupe_key=dedupe_key,
+            state="new",
+            due_at=created_at,
+            created_at=created_at,
+        )
+
+    def _anki_transition_new_or_learning(
+        self,
+        rating: str,
+        now_dt: datetime,
+        ease_factor: float,
+    ) -> tuple[str, datetime, int, float, int]:
+        if rating == "again":
+            return ("learning", now_dt + timedelta(minutes=10), 0, ease_factor, 0)
+        if rating == "hard":
+            return ("learning", now_dt + timedelta(minutes=30), 0, ease_factor, 0)
+        if rating == "good":
+            return ("review", now_dt + timedelta(days=1), 1, ease_factor, 1)
+        return ("review", now_dt + timedelta(days=4), 4, 2.7, 1)
+
+    def _anki_transition_review_or_relearning(
+        self,
+        rating: str,
+        now_dt: datetime,
+        interval_days: int,
+        ease_factor: float,
+        lapses: int,
+        state_before: str,
+    ) -> tuple[str, datetime, int, float, int, int]:
+        base_interval = max(1, interval_days)
+        if state_before == "relearning":
+            if rating == "again":
+                next_interval = max(1, round(base_interval * 0.2))
+                next_ease = max(1.3, ease_factor - 0.2)
+                return ("relearning", now_dt + timedelta(minutes=10), next_interval, next_ease, lapses + 1, 0)
+            if rating == "hard":
+                next_interval = max(base_interval + 1, round(base_interval * 1.2))
+                next_ease = max(1.3, ease_factor - 0.15)
+                return ("review", now_dt + timedelta(minutes=30), next_interval, next_ease, lapses, 1)
+            if rating == "good":
+                next_interval = max(base_interval + 1, round(base_interval * ease_factor))
+                return ("review", now_dt + timedelta(hours=2), next_interval, ease_factor, lapses, 1)
+            next_ease = min(3.5, ease_factor + 0.15)
+            next_interval = max(base_interval + 2, round(base_interval * next_ease * 1.3))
+            return ("review", now_dt + timedelta(days=1), next_interval, next_ease, lapses, 1)
+
+        if rating == "again":
+            next_ease = max(1.3, ease_factor - 0.2)
+            next_interval = max(1, round(base_interval * 0.2))
+            return ("relearning", now_dt + timedelta(minutes=10), next_interval, next_ease, lapses + 1, 0)
+        if rating == "hard":
+            next_ease = max(1.3, ease_factor - 0.15)
+            next_interval = max(base_interval + 1, round(base_interval * 1.2))
+            return ("review", now_dt + timedelta(days=next_interval), next_interval, next_ease, lapses, 0)
+        if rating == "good":
+            next_interval = max(base_interval + 1, round(base_interval * ease_factor))
+            return ("review", now_dt + timedelta(days=next_interval), next_interval, ease_factor, lapses, 0)
+        next_ease = min(3.5, ease_factor + 0.15)
+        next_interval = max(base_interval + 2, round(base_interval * next_ease * 1.3))
+        return ("review", now_dt + timedelta(days=next_interval), next_interval, next_ease, lapses, 0)
 
 
 class InboxReviewService:

@@ -127,6 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
     anki_list = anki_sub.add_parser("list")
     anki_list.add_argument("--status", default=None)
     anki_list.add_argument("--limit", type=int, default=50)
+    anki_review_due = anki_sub.add_parser("review-due", help="List due Anki cards")
+    anki_review_due.add_argument("--limit", type=int, default=20)
+    anki_review_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    anki_review = anki_sub.add_parser("review", help="Review one Anki card")
+    anki_review.add_argument("card_id", type=int)
+    anki_review.add_argument("--rate", required=True, choices=["again", "hard", "good", "easy"])
+    anki_review.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     anki_update = anki_sub.add_parser("update")
     anki_update.add_argument("draft_id", type=int)
     anki_update.add_argument("--front", default=None)
@@ -809,6 +816,28 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
             tags=args.tags,
         )
         print(f"anki draft created: id={draft_id}")
+        for warning in service.pop_nonfatal_warnings():
+            print(f"warning: {warning}")
+        return 0
+
+    if entity == "anki" and action == "review-due":
+        items = service.list_due_anki_cards(limit=args.limit, now=args.now)
+        for item in items:
+            print(
+                f"[{item['id']}] {item['state']} | due={item['due_at']} | interval={item.get('interval_days')} "
+                f"| ease={item.get('ease_factor')} | {item['front']}"
+            )
+        return 0
+
+    if entity == "anki" and action == "review":
+        updated = service.review_anki_card(card_id=args.card_id, rating=args.rate, now=args.now)
+        if updated is None:
+            print("anki card not found")
+            return 1
+        print(
+            f"anki card reviewed: id={updated['id']} rating={args.rate} "
+            f"state={updated['state']} due_at={updated['due_at']} interval={updated.get('interval_days')}"
+        )
         return 0
 
     if entity == "anki" and action == "list":

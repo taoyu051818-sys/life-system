@@ -28,7 +28,7 @@ def test_unauth_redirect_to_login_core_pages() -> None:
         db_path = Path(tmp) / "life.db"
         run_cli(["--db", str(db_path), "init-db"])
         client = _build_client(db_path)
-        for path in ("/inbox", "/tasks", "/reminders", "/journal", "/anki"):
+        for path in ("/inbox", "/tasks", "/reminders", "/journal", "/anki", "/anki/review"):
             resp = client.get(path, follow_redirects=False)
             assert resp.status_code == 302
             assert resp.headers["location"] == "/login"
@@ -258,4 +258,28 @@ def test_anki_update_and_archive() -> None:
             status = conn.execute("SELECT status FROM anki_drafts WHERE id=1").fetchone()["status"]
             assert status == "archived"
 
+
+
+def test_anki_review_page_and_rate_flow() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/anki/review")
+        assert page.status_code == 200
+        assert "Q1" in page.text
+
+        resp = client.post("/anki/review/1", data={"rate": "good"})
+        assert resp.status_code == 200
+        assert "no due cards" in resp.text
+
+        with connection_ctx(db_path) as conn:
+            card = conn.execute("SELECT state, reps FROM anki_cards WHERE id=1").fetchone()
+            assert card["state"] == "review"
+            assert card["reps"] == 1
+            ev = conn.execute("SELECT COUNT(*) AS c FROM anki_review_events WHERE card_id=1").fetchone()
+            assert ev["c"] == 1
 

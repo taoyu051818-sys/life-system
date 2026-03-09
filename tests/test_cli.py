@@ -2434,5 +2434,39 @@ class TestCliFlows(unittest.TestCase):
                 self.assertEqual(row["c"], 0)
 
 
+    def test_anki_review_due_and_review_flow(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
+            rc1, out1 = run_with_output(["--db", db_path, "anki", "review-due", "--limit", "20"])
+            self.assertEqual(rc1, 0)
+            self.assertIn("Q1", out1)
+
+            rc2, out2 = run_with_output(["--db", db_path, "anki", "review", "1", "--rate", "good"])
+            self.assertEqual(rc2, 0)
+            self.assertIn("anki card reviewed", out2)
+
+            with connection_ctx(db_path) as conn:
+                card = conn.execute("SELECT state, reps FROM anki_cards WHERE id=1").fetchone()
+                self.assertEqual(card["state"], "review")
+                self.assertEqual(card["reps"], 1)
+                event_count = conn.execute(
+                    "SELECT COUNT(*) AS c FROM anki_review_events WHERE card_id=1"
+                ).fetchone()["c"]
+                self.assertEqual(event_count, 1)
+
+    def test_anki_card_dedupe_warning_on_duplicate_draft(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "anki", "create", "manual", "Q1", "A1", "--deck-name", "default"])
+            rc, out = run_with_output(["--db", db_path, "anki", "create", "manual", "  Q1  ", "A1", "--deck-name", "default"])
+            self.assertEqual(rc, 0)
+            self.assertIn("warning: anki_card_duplicate_detected", out)
+            with connection_ctx(db_path) as conn:
+                c = conn.execute("SELECT COUNT(*) AS c FROM anki_cards").fetchone()["c"]
+                self.assertEqual(c, 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()

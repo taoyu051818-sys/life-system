@@ -392,6 +392,48 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "import_json": kept_json,
         })
 
+
+    @app.get("/anki/review", response_class=HTMLResponse)
+    def anki_review_page(request: Request, limit: int = Query(20, ge=1, le=100)) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            due_cards = service.list_due_anki_cards(limit=limit)
+        card = due_cards[0] if due_cards else None
+        ctx = _base_ctx(request)
+        ctx.update({"card": card, "due_count": len(due_cards), "flash": None})
+        return templates.TemplateResponse(request, "anki_review.html", ctx)
+
+    @app.post("/anki/review/{card_id}", response_class=HTMLResponse)
+    async def anki_review_action(request: Request, card_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        rating = (form.get("rate") or "").strip()
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            flash = None
+            try:
+                updated = service.review_anki_card(card_id=card_id, rating=rating)
+            except ValueError:
+                updated = None
+                flash = "invalid rating"
+            if updated is None and flash is None:
+                flash = "anki card not found"
+            due_cards = service.list_due_anki_cards(limit=20)
+        card = due_cards[0] if due_cards else None
+        return templates.TemplateResponse(
+            request,
+            "partials/_anki_review_panel.html",
+            {
+                "request": request,
+                "active_user": active_username,
+                "card": card,
+                "due_count": len(due_cards),
+                "flash": flash or f"reviewed with {rating}",
+            },
+        )
     return app
 
 
@@ -471,6 +513,7 @@ def _none_if_blank(value: str | None) -> str | None:
         return None
     out = value.strip()
     return out if out else None
+
 
 
 

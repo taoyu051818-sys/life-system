@@ -1006,6 +1006,175 @@ class AnkiDraftRepository:
         ).fetchone()
         return int(row["c"])
 
+
+class AnkiCardRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def find_by_dedupe_key(self, user_id: int, dedupe_key: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              last_reviewed_at, interval_days, ease_factor, reps, lapses, learning_step,
+              created_at, updated_at, archived_at
+            FROM anki_cards
+            WHERE user_id = ? AND dedupe_key = ?
+            LIMIT 1
+            """,
+            (user_id, dedupe_key),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def create(
+        self,
+        user_id: int,
+        draft_id: int | None,
+        front: str,
+        back: str,
+        tags: str | None,
+        deck: str,
+        dedupe_key: str,
+        state: str,
+        due_at: str,
+        created_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO anki_cards(
+              user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              interval_days, ease_factor, reps, lapses, learning_step, created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2.5, 0, 0, 0, ?, ?)
+            """,
+            (user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at, created_at, created_at),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get(self, user_id: int, card_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              last_reviewed_at, interval_days, ease_factor, reps, lapses, learning_step,
+              created_at, updated_at, archived_at
+            FROM anki_cards
+            WHERE user_id = ? AND id = ?
+            """,
+            (user_id, card_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_due(self, user_id: int, now_iso: str, limit: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              last_reviewed_at, interval_days, ease_factor, reps, lapses, learning_step,
+              created_at, updated_at, archived_at
+            FROM anki_cards
+            WHERE user_id = ?
+              AND state IN ('new', 'learning', 'review', 'relearning')
+              AND due_at <= ?
+            ORDER BY due_at ASC, id ASC
+            LIMIT ?
+            """,
+            (user_id, now_iso, limit),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_review_state(
+        self,
+        user_id: int,
+        card_id: int,
+        state: str,
+        due_at: str,
+        last_reviewed_at: str,
+        interval_days: int,
+        ease_factor: float,
+        reps: int,
+        lapses: int,
+        learning_step: int,
+        updated_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE anki_cards
+            SET
+              state = ?,
+              due_at = ?,
+              last_reviewed_at = ?,
+              interval_days = ?,
+              ease_factor = ?,
+              reps = ?,
+              lapses = ?,
+              learning_step = ?,
+              updated_at = ?
+            WHERE user_id = ? AND id = ?
+            """,
+            (
+                state,
+                due_at,
+                last_reviewed_at,
+                interval_days,
+                ease_factor,
+                reps,
+                lapses,
+                learning_step,
+                updated_at,
+                user_id,
+                card_id,
+            ),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+
+class AnkiReviewEventRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        user_id: int,
+        card_id: int,
+        rating: str,
+        state_before: str,
+        state_after: str,
+        due_before: str | None,
+        due_after: str | None,
+        interval_before: int,
+        interval_after: int,
+        ease_before: float,
+        ease_after: float,
+        reviewed_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO anki_review_events(
+              user_id, card_id, rating, state_before, state_after, due_before, due_after,
+              interval_before, interval_after, ease_before, ease_after, reviewed_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                card_id,
+                rating,
+                state_before,
+                state_after,
+                due_before,
+                due_after,
+                interval_before,
+                interval_after,
+                ease_before,
+                ease_after,
+                reviewed_at,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
 class JournalRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -1380,6 +1549,7 @@ class InboxFeedbackSignalRepository:
             (user_id, limit),
         ).fetchall()
         return [dict(row) for row in rows]
+
 
 
 
