@@ -23,3 +23,11 @@ def test_fix_restart_services_script_is_safe_and_has_key_units() -> None:
     assert "rm -f" not in text
     assert not ("sqlite3" in text.lower() and "delete" in text.lower())
 
+
+def test_run_encouragement_script_exists_and_sends_daily() -> None:
+    p = Path("scripts/run_encouragement.sh")
+    assert p.exists()
+    text = p.read_text(encoding="utf-8")
+    assert "set -euo pipefail" in text
+    assert "encouragement send-daily" in text
+    assert "init-db" not in text

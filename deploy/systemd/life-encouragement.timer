@@ -1,0 +1,11 @@
+﻿[Unit]
+Description=Run Life System daily encouragement at 20:30 Asia/Shanghai
+
+[Timer]
+OnCalendar=*-*-* 20:30:00
+Timezone=Asia/Shanghai
+Persistent=true
+Unit=life-encouragement.service
+
+[Install]
+WantedBy=timers.target

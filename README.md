@@ -466,3 +466,34 @@ CLI remains available:
   - recent 7 days: drafts created, cards activated, review count
   - rating distribution: again/hard/good/easy
   - deck breakdown: draft and due pressure by deck
+
+## Encouragement (DeepSeek + Telegram)
+
+Environment variables:
+- `DEEPSEEK_API_KEY` (preferred) or `APIKEY`
+- `DEEPSEEK_BASE_URL` (optional, default: `https://api.deepseek.com`)
+- `DEEPSEEK_MODEL` (optional, default: `deepseek-chat`)
+
+CLI:
+- `python -m life_system.main --user xiaoyu encouragement today`
+- `python -m life_system.main --user xiaoyu encouragement send`
+- `python -m life_system.main encouragement send-daily`
+
+Telegram:
+- New command: `/encouragement`
+- `telegram setup-menu` now includes `/encouragement`
+
+Systemd automation at 20:30 (Asia/Shanghai):
+- script: `/opt/life-system/scripts/run_encouragement.sh`
+- unit: `deploy/systemd/life-encouragement.service`
+- timer: `deploy/systemd/life-encouragement.timer`
+
+Install/update:
+```bash
+sudo chmod +x /opt/life-system/scripts/run_encouragement.sh
+sudo cp /opt/life-system/deploy/systemd/life-encouragement.service /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-encouragement.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now life-encouragement.timer
+sudo systemctl status life-encouragement.timer
+```

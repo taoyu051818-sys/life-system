@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sqlite3
 from csv import DictWriter
 from datetime import datetime, timedelta, timezone
@@ -963,6 +963,85 @@ class LifeSystemService:
             limit=limit,
             entry_type=entry_type,
         )
+    def build_today_encouragement(
+        self,
+        now: str | None = None,
+        deepseek_client: Any | None = None,
+    ) -> dict[str, Any]:
+        now_iso = now or now_utc_iso()
+        now_dt = self._parse_iso(now_iso)
+        day = now_dt.astimezone(CST).date().isoformat()
+        start_utc, end_utc = self._cst_day_to_utc_range(day)
+        rows = self.journal_repo.list_in_range(self.user_id, start_utc, end_utc, limit=50)
+
+        reflections = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "reflection"]
+        wins = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "win"]
+        checkins = [r for r in rows if str(r.get("entry_type")) == "checkin"]
+
+        used_ai = False
+        text: str
+        if deepseek_client is not None:
+            lines: list[str] = []
+            for item in rows[:10]:
+                lines.append(f"- {item['entry_type']}: {item['content']}")
+            evidence = "\n".join(lines) if lines else "- 今日暂无日志记录"
+            prompt = (
+                f"日期(北京时间): {day}\n"
+                f"用户: {self.username}\n"
+                "请基于以下日志证据，生成1-2句中文鼓励话语。"
+                "要求: 真实、克制、不夸大，不要鸡汤，不要编造不存在的进展。\n"
+                f"日志证据:\n{evidence}"
+            )
+            system_prompt = "你是一个谨慎、温和、证据优先的中文教练。只输出鼓励话语本身。"
+            try:
+                generated = deepseek_client.generate_encouragement(prompt=prompt, system_prompt=system_prompt)
+                if generated.strip():
+                    text = generated.strip()
+                    used_ai = True
+                else:
+                    text = self._fallback_encouragement(reflections, wins, checkins, len(rows))
+            except Exception:
+                text = self._fallback_encouragement(reflections, wins, checkins, len(rows))
+        else:
+            text = self._fallback_encouragement(reflections, wins, checkins, len(rows))
+
+        return {
+            "day": day,
+            "text": text,
+            "used_ai": used_ai,
+            "journal_count": len(rows),
+            "reflection_count": len(reflections),
+            "win_count": len(wins),
+        }
+
+    def send_today_encouragement(
+        self,
+        now: str | None = None,
+        deepseek_client: Any | None = None,
+    ) -> dict[str, Any]:
+        result = self.build_today_encouragement(now=now, deepseek_client=deepseek_client)
+        text = str(result["text"])
+        if self.telegram_chat_id and self.reminder_sender is not None and hasattr(self.reminder_sender, "send_message"):
+            message_id = self.reminder_sender.send_message(str(self.telegram_chat_id), text)
+            return {"status": "sent", "channel": "telegram", "message_id": message_id, **result}
+        return {"status": "cli_fallback", "channel": "cli", **result}
+
+    def _fallback_encouragement(
+        self,
+        reflections: list[str],
+        wins: list[str],
+        checkins: list[dict[str, Any]],
+        total_count: int,
+    ) -> str:
+        if wins:
+            return "今天有真实的小胜利，继续保持这个节奏，哪怕每次只推进一小步。"
+        if reflections:
+            return "你今天留下了有价值的反思，这本身就是在为下一次行动降低阻力。"
+        if checkins:
+            return "你今天至少做了状态签到，说明你仍在系统里，先把动作做小、继续前进。"
+        if total_count > 0:
+            return "今天有记录就有证据，先认可这一步，明天继续稳步推进。"
+        return "今天还没有留下日志也没关系，现在补一条最小记录，就重新回到节奏里。"
 
     def build_day_summary(self, day: str) -> dict[str, Any]:
         start_utc, end_utc = self._cst_day_to_utc_range(day)
@@ -1138,7 +1217,6 @@ class LifeSystemService:
             return "今天虽然正式完成项不多，但有真实记录和闭环动作。"
         return "今天证据还不多，先补一条简短记录会更稳。"
 
-
     def _record_triage_event(
         self,
         inbox_item_id: int,
@@ -1203,7 +1281,6 @@ class LifeSystemService:
             stats["created_signals"] += 1
         else:
             stats["skipped_existing"] += 1
-
 
     def _normalize_anki_text(self, value: str) -> str:
         return re.sub(r"\s+", " ", value.strip().lower())
@@ -1271,7 +1348,6 @@ class LifeSystemService:
         next_ease = min(3.5, ease_factor + 0.15)
         next_interval = max(base_interval + 2, round(base_interval * next_ease * 1.3))
         return ("review", now_dt + timedelta(days=next_interval), next_interval, next_ease, lapses, 0)
-
 
 class InboxReviewService:
     REVIEW_WINDOW_HOUR = 20
@@ -1551,9 +1627,4 @@ class InboxReviewService:
 
     def _to_iso(self, value: datetime) -> str:
         return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
-
-
-
-
-
 
