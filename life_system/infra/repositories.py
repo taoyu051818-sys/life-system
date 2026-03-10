@@ -4,6 +4,18 @@ import sqlite3
 from typing import Any
 
 
+def _dict_or_none(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    return dict(row) if row is not None else None
+
+
+def _dicts(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    return [dict(row) for row in rows]
+
+
+def _count(row: sqlite3.Row) -> int:
+    return int(row["c"])
+
+
 class UserRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -17,9 +29,7 @@ class UserRepository:
             """,
             (user_id,),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def get_by_username(self, username: str) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -30,9 +40,7 @@ class UserRepository:
             """,
             (username,),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def list_all(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -42,7 +50,7 @@ class UserRepository:
             ORDER BY username ASC
             """
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def add(self, username: str, display_name: str | None, created_at: str) -> int | None:
         try:
@@ -103,9 +111,7 @@ class UserRepository:
                 """,
                 (normalized,),
             ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
 
 class InboxRepository:
@@ -180,7 +186,7 @@ class InboxRepository:
                     """,
                     (user_id, limit),
                 ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def get(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -193,9 +199,7 @@ class InboxRepository:
             """,
             (inbox_item_id, user_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def mark_triaged(self, user_id: int, inbox_item_id: int, triaged_at: str) -> int:
         cur = self.conn.execute(
@@ -226,49 +230,49 @@ class InboxRepository:
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_captured_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_triaged_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND triaged_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_triaged_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND triaged_at >= ? AND triaged_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_archived_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND archived_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_archived_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND archived_at >= ? AND archived_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_unprocessed(self, user_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND status = 'new'",
             (user_id,),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def oldest_unprocessed_created_at(self, user_id: int) -> str | None:
         row = self.conn.execute(
@@ -298,7 +302,7 @@ class InboxRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_new_oldest(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -313,7 +317,7 @@ class InboxRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
 
 class TaskRepository:
@@ -365,7 +369,7 @@ class TaskRepository:
                 """,
                 (user_id, limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def mark_done(self, user_id: int, task_id: int, now: str) -> int:
         cur = self.conn.execute(
@@ -412,44 +416,42 @@ class TaskRepository:
             """,
             (task_id, user_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def count_created_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_created_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_done_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND completed_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_done_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND completed_at >= ? AND completed_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_snoozed_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = 'snoozed' AND updated_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_snoozed_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
@@ -460,28 +462,28 @@ class TaskRepository:
             """,
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_abandoned_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND abandoned_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_abandoned_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND abandoned_at >= ? AND abandoned_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_by_status(self, user_id: int, status: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = ?",
             (user_id, status),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
 
 class ReminderRepository:
@@ -516,7 +518,7 @@ class ReminderRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_pending_ack(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -539,7 +541,7 @@ class ReminderRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def get_for_user(self, user_id: int, reminder_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -556,9 +558,7 @@ class ReminderRepository:
             """,
             (reminder_id, user_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
 
     def list_for_user(self, user_id: int, limit: int) -> list[dict[str, Any]]:
@@ -587,7 +587,7 @@ class ReminderRepository:
             """,
             (user_id, user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def update_delivery(
         self,
@@ -714,7 +714,7 @@ class ReminderEventRepository:
             """,
             (user_id, reminder_id),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def count_by_day_and_type(self, user_id: int, day: str, event_type: str) -> int:
         row = self.conn.execute(
@@ -725,7 +725,7 @@ class ReminderEventRepository:
             """,
             (user_id, event_type, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_in_range_and_type(self, user_id: int, start_iso: str, end_iso: str, event_type: str) -> int:
         row = self.conn.execute(
@@ -736,7 +736,7 @@ class ReminderEventRepository:
             """,
             (user_id, event_type, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
 
 class AbandonmentLogRepository:
@@ -812,7 +812,7 @@ class AnkiDraftRepository:
         sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
         params.append(limit)
         rows = self.conn.execute(sql, params).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_deck_names(self, user_id: int) -> list[str]:
         rows = self.conn.execute(
@@ -839,28 +839,28 @@ class AnkiDraftRepository:
             """,
             [user_id, *draft_ids],
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def count_all(self, user_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ?",
             (user_id,),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_non_archived(self, user_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND status != 'archived'",
             (user_id,),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_created_since(self, user_id: int, start_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at >= ?",
             (user_id, start_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def deck_counts(self, user_id: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -899,7 +899,7 @@ class AnkiDraftRepository:
                 """,
                 (user_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def get_with_trace(self, user_id: int, draft_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -939,9 +939,7 @@ class AnkiDraftRepository:
             """,
             (user_id, draft_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def archive(self, user_id: int, draft_id: int) -> str:
         row = self.conn.execute(
@@ -1046,28 +1044,28 @@ class AnkiDraftRepository:
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_created_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_exported_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND exported_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_exported_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND exported_at >= ? AND exported_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
 
 class AnkiCardRepository:
@@ -1146,21 +1144,21 @@ class AnkiCardRepository:
             """,
             (user_id, now_iso, deck_name, deck_name, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def count_all(self, user_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ?",
             (user_id,),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_active(self, user_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ? AND state != 'archived'",
             (user_id,),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_due(self, user_id: int, now_iso: str, deck_name: str | None = None) -> int:
         row = self.conn.execute(
@@ -1174,14 +1172,14 @@ class AnkiCardRepository:
             """,
             (user_id, now_iso, deck_name, deck_name),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_created_since(self, user_id: int, start_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ? AND created_at >= ?",
             (user_id, start_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def deck_counts(self, user_id: int, now_iso: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1295,7 +1293,7 @@ class AnkiReviewEventRepository:
             "SELECT COUNT(*) AS c FROM anki_review_events WHERE user_id = ? AND reviewed_at >= ?",
             (user_id, start_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def rating_distribution_since(self, user_id: int, start_iso: str) -> dict[str, int]:
         rows = self.conn.execute(
@@ -1382,7 +1380,7 @@ class JournalRepository:
                 """,
                 (user_id, limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def today(self, user_id: int, day_prefix: str, limit: int, entry_type: str | None = None) -> list[dict[str, Any]]:
         if entry_type:
@@ -1411,21 +1409,21 @@ class JournalRepository:
                 """,
                 (user_id, f"{day_prefix}%", limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def count_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM journal_entries WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM journal_entries WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def avg_state_by_day(self, user_id: int, day: str) -> dict[str, Any]:
         row = self.conn.execute(
@@ -1468,7 +1466,7 @@ class JournalRepository:
             """,
             (user_id, f"{day}%", limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_in_range(self, user_id: int, start_iso: str, end_iso: str, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1483,7 +1481,7 @@ class JournalRepository:
             """,
             (user_id, start_iso, end_iso, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
 
 def created_at_now() -> str:
@@ -1524,7 +1522,7 @@ class AppStateRepository:
             """,
             (f"{key_prefix}%",),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
 
 class TriageEventRepository:
@@ -1580,7 +1578,7 @@ class TriageEventRepository:
             """,
             (user_id, inbox_item_id),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_recent(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1595,7 +1593,7 @@ class TriageEventRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def first_for_inbox(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -1610,9 +1608,7 @@ class TriageEventRepository:
             """,
             (user_id, inbox_item_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def first_in_window(self, user_id: int, start_at: str, end_at: str) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -1627,9 +1623,7 @@ class TriageEventRepository:
             """,
             (user_id, start_at, end_at),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
 
 class InboxFeedbackSignalRepository:
@@ -1687,7 +1681,8 @@ class InboxFeedbackSignalRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
+
 
 
 
