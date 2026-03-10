@@ -1,12 +1,14 @@
-﻿import json
+import json
 import os
 import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from life_system.app.services import LifeSystemService
 from life_system.cli.commands import run_cli
 from life_system.infra.db import connection_ctx
+from life_system.infra.repositories import UserRepository
 from life_system.web.app import create_app
 
 
@@ -22,6 +24,21 @@ def _login(client: TestClient) -> None:
     resp = client.post("/login", data={"password": "test-pass"})
     assert resp.status_code in (200, 303)
 
+
+
+def _create_anki_share_url(db_path: Path, username: str = "xiaoyu") -> str:
+    with connection_ctx(db_path) as conn:
+        user = UserRepository(conn).get_by_username(username)
+        assert user is not None
+        service = LifeSystemService(
+            conn=conn,
+            user_id=int(user["id"]),
+            username=str(user["username"]),
+            telegram_chat_id=user.get("telegram_chat_id"),
+            reminder_sender=None,
+        )
+        payload = service.create_anki_review_share_link(base_url="http://testserver")
+        return str(payload["url"])
 
 def test_unauth_redirect_to_login_core_pages() -> None:
     with tempfile.TemporaryDirectory() as tmp:
@@ -98,7 +115,7 @@ def test_quick_journal_focus_checkin_write() -> None:
                 "SELECT entry_type, content, focus_level, energy_level, mood_level FROM journal_entries WHERE user_id=1 ORDER BY id DESC LIMIT 1"
             ).fetchone()
             assert row["entry_type"] == "checkin"
-            assert row["content"] == "状态签到"
+            assert row["content"] == "\u72b6\u6001\u7b7e\u5230"
             assert row["focus_level"] == 4
             assert row["energy_level"] is None
             assert row["mood_level"] is None
@@ -442,6 +459,50 @@ def test_anki_review_deck_filter() -> None:
         assert "Q-eco" in page.text
         assert "Q-default" not in page.text
 
+
+
+def test_anki_review_share_link_allows_review_without_login() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q-share", "A-share", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1"])
+        client = _build_client(db_path)
+        share_url = _create_anki_share_url(db_path)
+        share_resp = client.get(share_url, follow_redirects=False)
+        assert share_resp.status_code == 303
+        assert share_resp.headers["location"] == "/anki/review"
+        page = client.get("/anki/review")
+        assert page.status_code == 200
+        assert "Q-share" in page.text
+        no_tasks = client.get("/tasks", follow_redirects=False)
+        assert no_tasks.status_code == 302
+        assert no_tasks.headers["location"] == "/login"
+
+
+def test_anki_review_share_invalid_token_denied() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        client = _build_client(db_path)
+        bad = client.get("/share/anki-review?t=bad-token")
+        assert bad.status_code == 400
+        assert "invalid or expired share token" in bad.text
+
+
+def test_anki_review_share_token_single_use() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q-one", "A-one", "--deck-name", "default"])
+        run_cli(["--db", str(db_path), "anki", "activate", "1"])
+        client = _build_client(db_path)
+        share_url = _create_anki_share_url(db_path)
+        first = client.get(share_url, follow_redirects=False)
+        assert first.status_code == 303
+        second = client.get(share_url)
+        assert second.status_code == 400
+        assert "invalid or expired share token" in second.text
 
 def test_anki_stats_page_with_data() -> None:
     with tempfile.TemporaryDirectory() as tmp:

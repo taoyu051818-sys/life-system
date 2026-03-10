@@ -1491,6 +1491,67 @@ def created_at_now() -> str:
     return now_utc_iso()
 
 
+class ShareTokenRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        user_id: int,
+        scope: str,
+        token_hash: str,
+        expires_at: str,
+        max_uses: int,
+        created_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO share_tokens(
+              user_id, scope, token_hash, expires_at, max_uses, used_count, created_at
+            )
+            VALUES(?, ?, ?, ?, ?, 0, ?)
+            """,
+            (user_id, scope, token_hash, expires_at, max_uses, created_at),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_active_by_hash(self, scope: str, token_hash: str, now_iso: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, scope, token_hash, expires_at,
+              max_uses, used_count, created_at, last_used_at, revoked_at
+            FROM share_tokens
+            WHERE scope = ?
+              AND token_hash = ?
+              AND revoked_at IS NULL
+              AND expires_at > ?
+              AND used_count < max_uses
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (scope, token_hash, now_iso),
+        ).fetchone()
+        return _dict_or_none(row)
+
+    def consume(self, token_id: int, now_iso: str) -> bool:
+        cur = self.conn.execute(
+            """
+            UPDATE share_tokens
+            SET used_count = used_count + 1,
+                last_used_at = ?
+            WHERE id = ?
+              AND revoked_at IS NULL
+              AND expires_at > ?
+              AND used_count < max_uses
+            """,
+            (now_iso, token_id, now_iso),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+
 class AppStateRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -1682,6 +1743,7 @@ class InboxFeedbackSignalRepository:
             (user_id, limit),
         ).fetchall()
         return _dicts(rows)
+
 
 
 

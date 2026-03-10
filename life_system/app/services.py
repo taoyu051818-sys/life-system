@@ -1,4 +1,6 @@
-﻿import json
+import hashlib
+import json
+import secrets
 import sqlite3
 from csv import DictWriter
 from datetime import datetime, timedelta, timezone
@@ -22,6 +24,7 @@ from life_system.infra.repositories import (
     TaskRepository,
     TriageEventRepository,
     UserRepository,
+    ShareTokenRepository,
 )
 
 RETRY_MINUTES = [10, 30, 120]
@@ -56,6 +59,7 @@ class _LegacyLifeSystemService:
         self.triage_event_repo = repos.get("triage_event_repo") or TriageEventRepository(conn)
         self.feedback_repo = repos.get("feedback_repo") or InboxFeedbackSignalRepository(conn)
         self.state_repo = repos.get("state_repo") or AppStateRepository(conn)
+        self.share_token_repo = repos.get("share_token_repo") or ShareTokenRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
         self._nonfatal_warnings: list[str] = []
 
@@ -2332,6 +2336,7 @@ class AnkiService:
         self._legacy = legacy
         self.user_id = legacy.user_id
         self.anki_repo = legacy.anki_repo
+        self.share_token_repo = legacy.share_token_repo
         self.event_logger = legacy.event_logger
 
     def create_anki_draft(self, *args: Any, **kwargs: Any) -> int:
@@ -2398,6 +2403,61 @@ class AnkiService:
 
     def export_anki_drafts_csv(self, *args: Any, **kwargs: Any) -> int:
         return self._legacy.export_anki_drafts_csv(*args, **kwargs)
+
+    def create_anki_review_share_link(
+        self,
+        base_url: str,
+        ttl_minutes: int = 120,
+        max_uses: int = 1,
+        now: str | None = None,
+    ) -> dict[str, Any]:
+        now_dt = self._parse_iso(now) if now else datetime.now(timezone.utc)
+        safe_ttl = ttl_minutes if ttl_minutes > 0 else 120
+        safe_max_uses = max_uses if max_uses > 0 else 1
+        expires_at = self._to_iso(now_dt + timedelta(minutes=safe_ttl))
+        token = secrets.token_urlsafe(24)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        created_at = self._to_iso(now_dt)
+        self.share_token_repo.create(
+            user_id=self.user_id,
+            scope="anki_review",
+            token_hash=token_hash,
+            expires_at=expires_at,
+            max_uses=safe_max_uses,
+            created_at=created_at,
+        )
+        base = base_url.rstrip("/")
+        url = f"{base}/share/anki-review?t={token}"
+        return {
+            "url": url,
+            "expires_at": expires_at,
+            "scope": "anki_review",
+            "max_uses": safe_max_uses,
+        }
+
+    def consume_anki_review_share_token(self, token: str, now: str | None = None) -> dict[str, Any]:
+        token_text = token.strip()
+        if not token_text:
+            return {"ok": False, "reason": "invalid_token"}
+        now_iso = now or now_utc_iso()
+        token_hash = hashlib.sha256(token_text.encode("utf-8")).hexdigest()
+        row = self.share_token_repo.get_active_by_hash(
+            scope="anki_review",
+            token_hash=token_hash,
+            now_iso=now_iso,
+        )
+        if row is None:
+            return {"ok": False, "reason": "invalid_or_expired"}
+        consumed = self.share_token_repo.consume(token_id=int(row["id"]), now_iso=now_iso)
+        if not consumed:
+            return {"ok": False, "reason": "invalid_or_expired"}
+        return {"ok": True, "user_id": int(row["user_id"]), "scope": str(row["scope"])}
+
+    def _parse_iso(self, value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def _to_iso(self, value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
 
 class JournalService:
@@ -2859,6 +2919,12 @@ class LifeSystemService:
     def export_anki_drafts_csv(self, *args: Any, **kwargs: Any) -> int:
         return self.anki_service.export_anki_drafts_csv(*args, **kwargs)
 
+    def create_anki_review_share_link(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.anki_service.create_anki_review_share_link(*args, **kwargs)
+
+    def consume_anki_review_share_token(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.anki_service.consume_anki_review_share_token(*args, **kwargs)
+
     # Journal facade
     def add_journal_entry(self, *args: Any, **kwargs: Any) -> int:
         return self.journal_service.add_journal_entry(*args, **kwargs)
@@ -3167,3 +3233,7 @@ class InboxReviewService:
 
 
 
+
+
+class TelegramInboxReviewService(InboxReviewService):
+    pass
