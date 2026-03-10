@@ -28,7 +28,7 @@ RETRY_MINUTES = [10, 30, 120]
 CST = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
 
-class LifeSystemService:
+class _LegacyLifeSystemService:
     def __init__(
         self,
         conn: sqlite3.Connection,
@@ -37,23 +37,25 @@ class LifeSystemService:
         telegram_chat_id: str | None = None,
         reminder_sender: Any | None = None,
         event_logger: EventLogger | None = None,
+        repositories: dict[str, Any] | None = None,
     ):
+        repos = repositories or {}
         self.user_id = user_id
         self.username = username
         self.telegram_chat_id = telegram_chat_id
         self.reminder_sender = reminder_sender
-        self.inbox_repo = InboxRepository(conn)
-        self.task_repo = TaskRepository(conn)
-        self.reminder_repo = ReminderRepository(conn)
-        self.reminder_event_repo = ReminderEventRepository(conn)
-        self.abandon_repo = AbandonmentLogRepository(conn)
-        self.anki_repo = AnkiDraftRepository(conn)
-        self.anki_card_repo = AnkiCardRepository(conn)
-        self.anki_review_event_repo = AnkiReviewEventRepository(conn)
-        self.journal_repo = JournalRepository(conn)
-        self.triage_event_repo = TriageEventRepository(conn)
-        self.feedback_repo = InboxFeedbackSignalRepository(conn)
-        self.state_repo = AppStateRepository(conn)
+        self.inbox_repo = repos.get("inbox_repo") or InboxRepository(conn)
+        self.task_repo = repos.get("task_repo") or TaskRepository(conn)
+        self.reminder_repo = repos.get("reminder_repo") or ReminderRepository(conn)
+        self.reminder_event_repo = repos.get("reminder_event_repo") or ReminderEventRepository(conn)
+        self.abandon_repo = repos.get("abandon_repo") or AbandonmentLogRepository(conn)
+        self.anki_repo = repos.get("anki_repo") or AnkiDraftRepository(conn)
+        self.anki_card_repo = repos.get("anki_card_repo") or AnkiCardRepository(conn)
+        self.anki_review_event_repo = repos.get("anki_review_event_repo") or AnkiReviewEventRepository(conn)
+        self.journal_repo = repos.get("journal_repo") or JournalRepository(conn)
+        self.triage_event_repo = repos.get("triage_event_repo") or TriageEventRepository(conn)
+        self.feedback_repo = repos.get("feedback_repo") or InboxFeedbackSignalRepository(conn)
+        self.state_repo = repos.get("state_repo") or AppStateRepository(conn)
         self.event_logger = event_logger or NullEventLogger()
         self._nonfatal_warnings: list[str] = []
 
@@ -98,7 +100,11 @@ class LifeSystemService:
             return None
         if not self._is_inbox_triage_allowed(item):
             return None
-        task_id = self.create_task(title=item["content"], inbox_item_id=inbox_item_id)
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            task_id = task_service.create_task(title=item["content"], inbox_item_id=inbox_item_id)
+        else:
+            task_id = self.create_task(title=item["content"], inbox_item_id=inbox_item_id)
         if task_id is None:
             return None
         self._record_triage_event(
@@ -336,6 +342,15 @@ class LifeSystemService:
         due_at: str | None = None,
         inbox_item_id: int | None = None,
     ) -> int | None:
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            return task_service.create_task(
+                title=title,
+                notes=notes,
+                priority=priority,
+                due_at=due_at,
+                inbox_item_id=inbox_item_id,
+            )
         if inbox_item_id is not None:
             item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
             if item is None:
@@ -355,10 +370,16 @@ class LifeSystemService:
         return task_id
 
     def list_tasks(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            return task_service.list_tasks(status=status, limit=limit)
         return self.task_repo.list(user_id=self.user_id, status=status, limit=limit)
 
 
     def get_task_detail(self, task_id: int) -> dict[str, Any] | None:
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            return task_service.get_task_detail(task_id)
         rows = self.task_repo.list(user_id=self.user_id, status=None, limit=1000)
         for row in rows:
             if int(row["id"]) == task_id:
@@ -366,12 +387,18 @@ class LifeSystemService:
         return None
 
     def done_task(self, task_id: int) -> bool:
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            return task_service.done_task(task_id)
         updated = self.task_repo.mark_done(user_id=self.user_id, task_id=task_id, now=now_utc_iso())
         if updated:
             self.event_logger.log("task_done", {"task_id": task_id})
         return bool(updated)
 
     def snooze_task(self, task_id: int, snooze_until: str) -> bool:
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            return task_service.snooze_task(task_id, snooze_until)
         updated = self.task_repo.mark_snoozed(
             user_id=self.user_id,
             task_id=task_id,
@@ -389,6 +416,14 @@ class LifeSystemService:
         reason_text: str | None = None,
         energy_level: int | None = None,
     ) -> bool:
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            return task_service.abandon_task(
+                task_id=task_id,
+                reason_code=reason_code,
+                reason_text=reason_text,
+                energy_level=energy_level,
+            )
         now = now_utc_iso()
         updated = self.task_repo.mark_abandoned(user_id=self.user_id, task_id=task_id, now=now)
         if not updated:
@@ -405,7 +440,15 @@ class LifeSystemService:
         return True
 
     def create_reminder(self, task_id: int, remind_at: str, channel: str = "cli") -> int | None:
-        task = self.task_repo.get(user_id=self.user_id, task_id=task_id)
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.create_reminder(task_id=task_id, remind_at=remind_at, channel=channel)
+
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            task = task_service.get_task_for_reminder(task_id)
+        else:
+            task = self.task_repo.get(user_id=self.user_id, task_id=task_id)
         if task is None:
             return None
         reminder_id = self.reminder_repo.create(
@@ -474,6 +517,11 @@ class LifeSystemService:
         return self.reminder_repo.list_for_user(user_id=self.user_id, limit=limit)
 
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
+        # delegated_to=ReminderService.list_pending_ack_reminders
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.list_pending_ack_reminders(limit=limit)
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
 
     def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> str:
@@ -514,9 +562,19 @@ class LifeSystemService:
         return "skipped"
 
     def show_reminder(self, reminder_id: int) -> dict[str, Any] | None:
+        # delegated_to=ReminderService.show_reminder
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.show_reminder(reminder_id=reminder_id)
         return self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
 
     def reminder_history(self, reminder_id: int) -> list[dict[str, Any]] | None:
+        # delegated_to=ReminderService.reminder_history
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.reminder_history(reminder_id=reminder_id)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
             return None
@@ -937,6 +995,18 @@ class LifeSystemService:
         mood_level: int | None = None,
         tags: str | None = None,
     ) -> int:
+        journal_service = getattr(self, "journal_service", None)
+        if journal_service is not None:
+            return journal_service.add_journal_entry(
+                content=content,
+                entry_type=entry_type,
+                related_task_id=related_task_id,
+                related_inbox_id=related_inbox_id,
+                energy_level=energy_level,
+                focus_level=focus_level,
+                mood_level=mood_level,
+                tags=tags,
+            )
         entry_id = self.journal_repo.create(
             user_id=self.user_id,
             entry_type=entry_type,
@@ -953,9 +1023,15 @@ class LifeSystemService:
         return entry_id
 
     def list_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
+        journal_service = getattr(self, "journal_service", None)
+        if journal_service is not None:
+            return journal_service.list_journal(limit=limit, entry_type=entry_type)
         return self.journal_repo.list(user_id=self.user_id, limit=limit, entry_type=entry_type)
 
     def today_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
+        journal_service = getattr(self, "journal_service", None)
+        if journal_service is not None:
+            return journal_service.today_journal(limit=limit, entry_type=entry_type)
         day_prefix = datetime.now(timezone.utc).date().isoformat()
         return self.journal_repo.today(
             user_id=self.user_id,
@@ -968,6 +1044,10 @@ class LifeSystemService:
         now: str | None = None,
         deepseek_client: Any | None = None,
     ) -> dict[str, Any]:
+        encouragement_service = getattr(self, "encouragement_service", None)
+        if encouragement_service is not None:
+            return encouragement_service.build_today_encouragement(now=now, deepseek_client=deepseek_client)
+
         now_iso = now or now_utc_iso()
         now_dt = self._parse_iso(now_iso)
         day = now_dt.astimezone(CST).date().isoformat()
@@ -1019,6 +1099,10 @@ class LifeSystemService:
         now: str | None = None,
         deepseek_client: Any | None = None,
     ) -> dict[str, Any]:
+        encouragement_service = getattr(self, "encouragement_service", None)
+        if encouragement_service is not None:
+            return encouragement_service.send_today_encouragement(now=now, deepseek_client=deepseek_client)
+
         result = self.build_today_encouragement(now=now, deepseek_client=deepseek_client)
         text = str(result["text"])
         if self.telegram_chat_id and self.reminder_sender is not None and hasattr(self.reminder_sender, "send_message"):
@@ -1044,6 +1128,10 @@ class LifeSystemService:
         return "今天还没有留下日志也没关系，现在补一条最小记录，就重新回到节奏里。"
 
     def build_day_summary(self, day: str) -> dict[str, Any]:
+        summary_service = getattr(self, "summary_service", None)
+        if summary_service is not None:
+            return summary_service.build_day_summary(day)
+
         start_utc, end_utc = self._cst_day_to_utc_range(day)
         overview = {
             "inbox_captured": self.inbox_repo.count_captured_in_range(self.user_id, start_utc, end_utc),
@@ -1103,6 +1191,10 @@ class LifeSystemService:
         }
 
     def build_today_summary(self) -> dict[str, Any]:
+        summary_service = getattr(self, "summary_service", None)
+        if summary_service is not None:
+            return summary_service.build_today_summary()
+
         day = datetime.now(CST).date().isoformat()
         return self.build_day_summary(day)
 
@@ -1349,6 +1441,733 @@ class LifeSystemService:
         next_interval = max(base_interval + 2, round(base_interval * next_ease * 1.3))
         return ("review", now_dt + timedelta(days=next_interval), next_interval, next_ease, lapses, 0)
 
+class InboxService:
+    def __init__(self, legacy: _LegacyLifeSystemService):
+        self._legacy = legacy
+
+    def capture_inbox(self, *args: Any, **kwargs: Any) -> int:
+        return self._legacy.capture_inbox(*args, **kwargs)
+
+    def list_inbox(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.list_inbox(*args, **kwargs)
+
+    def triage_inbox_to_task(self, *args: Any, **kwargs: Any) -> int | None:
+        return self._legacy.triage_inbox_to_task(*args, **kwargs)
+
+    def triage_inbox_to_anki(self, *args: Any, **kwargs: Any) -> int | None:
+        return self._legacy.triage_inbox_to_anki(*args, **kwargs)
+
+    def archive_inbox(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.archive_inbox(*args, **kwargs)
+
+    def list_new_inbox_oldest(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.list_new_inbox_oldest(*args, **kwargs)
+
+    def inbox_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]] | None:
+        return self._legacy.inbox_history(*args, **kwargs)
+
+    def triage_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.triage_history(*args, **kwargs)
+
+    def feedback_scan(self, *args: Any, **kwargs: Any) -> dict[str, int]:
+        return self._legacy.feedback_scan(*args, **kwargs)
+
+    def feedback_report(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.feedback_report(*args, **kwargs)
+
+    def inbox_triage_status(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.inbox_triage_status(*args, **kwargs)
+
+    def pop_nonfatal_warnings(self) -> list[str]:
+        return self._legacy.pop_nonfatal_warnings()
+
+
+class TaskService:
+    def __init__(
+        self,
+        user_id: int,
+        username: str,
+        inbox_repo: InboxRepository,
+        task_repo: TaskRepository,
+        abandon_repo: AbandonmentLogRepository,
+        event_logger: EventLogger,
+    ):
+        self.user_id = user_id
+        self.username = username
+        self.inbox_repo = inbox_repo
+        self.task_repo = task_repo
+        self.abandon_repo = abandon_repo
+        self.event_logger = event_logger
+
+    def create_task(
+        self,
+        title: str,
+        notes: str | None = None,
+        priority: int = 3,
+        due_at: str | None = None,
+        inbox_item_id: int | None = None,
+    ) -> int | None:
+        if inbox_item_id is not None:
+            item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+            if item is None:
+                return None
+        task_id = self.task_repo.create(
+            user_id=self.user_id,
+            title=title,
+            notes=notes,
+            priority=priority,
+            due_at=due_at,
+            inbox_item_id=inbox_item_id,
+            created_at=now_utc_iso(),
+        )
+        if inbox_item_id is not None:
+            self.inbox_repo.mark_triaged(user_id=self.user_id, inbox_item_id=inbox_item_id, triaged_at=now_utc_iso())
+        self.event_logger.log("task_created", {"task_id": task_id, "username": self.username})
+        return task_id
+
+    def list_tasks(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        return self.task_repo.list(user_id=self.user_id, status=status, limit=limit)
+
+    def get_task_detail(self, task_id: int) -> dict[str, Any] | None:
+        rows = self.task_repo.list(user_id=self.user_id, status=None, limit=1000)
+        for row in rows:
+            if int(row["id"]) == task_id:
+                return row
+        return None
+
+    def done_task(self, task_id: int) -> bool:
+        updated = self.task_repo.mark_done(user_id=self.user_id, task_id=task_id, now=now_utc_iso())
+        if updated:
+            self.event_logger.log("task_done", {"task_id": task_id})
+        return bool(updated)
+
+    def snooze_task(self, task_id: int, snooze_until: str) -> bool:
+        updated = self.task_repo.mark_snoozed(
+            user_id=self.user_id,
+            task_id=task_id,
+            snooze_until=snooze_until,
+            now=now_utc_iso(),
+        )
+        if updated:
+            self.event_logger.log("task_snoozed", {"task_id": task_id, "snooze_until": snooze_until})
+        return bool(updated)
+
+    def abandon_task(
+        self,
+        task_id: int,
+        reason_code: str | None = None,
+        reason_text: str | None = None,
+        energy_level: int | None = None,
+    ) -> bool:
+        now = now_utc_iso()
+        updated = self.task_repo.mark_abandoned(user_id=self.user_id, task_id=task_id, now=now)
+        if not updated:
+            return False
+        self.abandon_repo.create(
+            user_id=self.user_id,
+            task_id=task_id,
+            reason_code=reason_code,
+            reason_text=reason_text,
+            energy_level=energy_level,
+            created_at=now,
+        )
+        self.event_logger.log("task_abandoned", {"task_id": task_id, "reason_code": reason_code})
+        return True
+
+    def get_task_for_reminder(self, task_id: int) -> dict[str, Any] | None:
+        return self.task_repo.get(user_id=self.user_id, task_id=task_id)
+
+class ReminderService:
+    def __init__(
+        self,
+        user_id: int,
+        task_service: TaskService,
+        reminder_repo: ReminderRepository,
+        reminder_event_repo: ReminderEventRepository,
+        event_logger: EventLogger,
+        legacy: _LegacyLifeSystemService,
+    ):
+        self.user_id = user_id
+        self.task_service = task_service
+        self.reminder_repo = reminder_repo
+        self.reminder_event_repo = reminder_event_repo
+        self.event_logger = event_logger
+        self._legacy = legacy
+
+    def create_reminder(self, task_id: int, remind_at: str, channel: str = "cli") -> int | None:
+        task = self.task_service.get_task_for_reminder(task_id)
+        if task is None:
+            return None
+        reminder_id = self.reminder_repo.create(
+            task_id=task_id,
+            remind_at=remind_at,
+            channel=channel,
+            created_at=now_utc_iso(),
+        )
+        self._log_reminder_event(reminder_id, "created", {"task_id": task_id, "channel": channel})
+        self.event_logger.log("reminder_created", {"reminder_id": reminder_id, "task_id": task_id})
+        return reminder_id
+
+    def due_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.due_reminders(*args, **kwargs)
+
+    def send_due_reminders(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._legacy.send_due_reminders(*args, **kwargs)
+
+    def list_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.list_reminders(*args, **kwargs)
+
+    def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
+
+    def ack_reminder(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.ack_reminder(*args, **kwargs)
+
+    def snooze_reminder(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.snooze_reminder(*args, **kwargs)
+
+    def skip_reminder(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.skip_reminder(*args, **kwargs)
+
+    def show_reminder(self, reminder_id: int) -> dict[str, Any] | None:
+        return self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+
+    def reminder_history(self, reminder_id: int) -> list[dict[str, Any]] | None:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return None
+        return self.reminder_event_repo.list_for_user(user_id=self.user_id, reminder_id=reminder_id)
+
+    def _log_reminder_event(self, reminder_id: int, event_type: str, payload: dict[str, Any]) -> None:
+        self.reminder_event_repo.create(
+            reminder_id=reminder_id,
+            user_id=self.user_id,
+            event_type=event_type,
+            event_at=now_utc_iso(),
+            payload=json.dumps(payload, ensure_ascii=True),
+        )
+
+class AnkiService:
+    def __init__(self, legacy: _LegacyLifeSystemService):
+        self._legacy = legacy
+
+    def create_anki_draft(self, *args: Any, **kwargs: Any) -> int:
+        return self._legacy.create_anki_draft(*args, **kwargs)
+
+    def list_anki_drafts(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.list_anki_drafts(*args, **kwargs)
+
+    def list_anki_decks(self, *args: Any, **kwargs: Any) -> list[str]:
+        return self._legacy.list_anki_decks(*args, **kwargs)
+
+    def show_anki_draft(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return self._legacy.show_anki_draft(*args, **kwargs)
+
+    def archive_anki_draft(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.archive_anki_draft(*args, **kwargs)
+
+    def update_anki_draft(self, *args: Any, **kwargs: Any) -> str:
+        return self._legacy.update_anki_draft(*args, **kwargs)
+
+    def activate_anki_drafts(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._legacy.activate_anki_drafts(*args, **kwargs)
+
+    def list_due_anki_cards(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self._legacy.list_due_anki_cards(*args, **kwargs)
+
+    def review_anki_card(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return self._legacy.review_anki_card(*args, **kwargs)
+
+    def review_anki_cards(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._legacy.review_anki_cards(*args, **kwargs)
+
+    def build_anki_stats(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._legacy.build_anki_stats(*args, **kwargs)
+
+    def import_anki_json(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self._legacy.import_anki_json(*args, **kwargs)
+
+    def export_anki_drafts_csv(self, *args: Any, **kwargs: Any) -> int:
+        return self._legacy.export_anki_drafts_csv(*args, **kwargs)
+
+
+class JournalService:
+    def __init__(self, user_id: int, journal_repo: JournalRepository, event_logger: EventLogger):
+        self.user_id = user_id
+        self.journal_repo = journal_repo
+        self.event_logger = event_logger
+
+    def add_journal_entry(
+        self,
+        content: str,
+        entry_type: str,
+        related_task_id: int | None = None,
+        related_inbox_id: int | None = None,
+        energy_level: int | None = None,
+        focus_level: int | None = None,
+        mood_level: int | None = None,
+        tags: str | None = None,
+    ) -> int:
+        entry_id = self.journal_repo.create(
+            user_id=self.user_id,
+            entry_type=entry_type,
+            content=content,
+            related_task_id=related_task_id,
+            related_inbox_id=related_inbox_id,
+            energy_level=energy_level,
+            focus_level=focus_level,
+            mood_level=mood_level,
+            tags=tags,
+            created_at=now_utc_iso(),
+        )
+        self.event_logger.log("journal_added", {"entry_id": entry_id, "entry_type": entry_type})
+        return entry_id
+
+    def list_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
+        return self.journal_repo.list(user_id=self.user_id, limit=limit, entry_type=entry_type)
+
+    def today_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
+        day_prefix = datetime.now(timezone.utc).date().isoformat()
+        return self.journal_repo.today(
+            user_id=self.user_id,
+            day_prefix=day_prefix,
+            limit=limit,
+            entry_type=entry_type,
+        )
+
+class SummaryService:
+    def __init__(
+        self,
+        user_id: int,
+        inbox_repo: InboxRepository,
+        task_repo: TaskRepository,
+        reminder_repo: ReminderRepository,
+        reminder_event_repo: ReminderEventRepository,
+        anki_repo: AnkiDraftRepository,
+        journal_repo: JournalRepository,
+    ):
+        self.user_id = user_id
+        self.inbox_repo = inbox_repo
+        self.task_repo = task_repo
+        self.reminder_repo = reminder_repo
+        self.reminder_event_repo = reminder_event_repo
+        self.anki_repo = anki_repo
+        self.journal_repo = journal_repo
+
+    def build_day_summary(self, day: str) -> dict[str, Any]:
+        start_utc, end_utc = self._cst_day_to_utc_range(day)
+        overview = {
+            "inbox_captured": self.inbox_repo.count_captured_in_range(self.user_id, start_utc, end_utc),
+            "inbox_triaged": self.inbox_repo.count_triaged_in_range(self.user_id, start_utc, end_utc),
+            "inbox_archived": self.inbox_repo.count_archived_in_range(self.user_id, start_utc, end_utc),
+            "tasks_created": self.task_repo.count_created_in_range(self.user_id, start_utc, end_utc),
+            "tasks_done": self.task_repo.count_done_in_range(self.user_id, start_utc, end_utc),
+            "tasks_snoozed": self.task_repo.count_snoozed_in_range(self.user_id, start_utc, end_utc),
+            "tasks_abandoned": self.task_repo.count_abandoned_in_range(self.user_id, start_utc, end_utc),
+            "reminders_sent": self.reminder_event_repo.count_in_range_and_type(self.user_id, start_utc, end_utc, "sent"),
+            "reminders_retried": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "retried"
+            ),
+            "reminders_acknowledged": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "acknowledged"
+            ),
+            "reminders_skipped": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "skipped"
+            ),
+            "reminders_expired": self.reminder_event_repo.count_in_range_and_type(
+                self.user_id, start_utc, end_utc, "expired"
+            ),
+            "anki_created": self.anki_repo.count_created_in_range(self.user_id, start_utc, end_utc),
+            "anki_exported": self.anki_repo.count_exported_in_range(self.user_id, start_utc, end_utc),
+            "journal_count": self.journal_repo.count_in_range(self.user_id, start_utc, end_utc),
+        }
+
+        journal_rows = self.journal_repo.list_in_range(self.user_id, start_utc, end_utc, limit=8)
+        grouped: dict[str, list[dict[str, Any]]] = {"activity": [], "reflection": [], "win": [], "checkin": []}
+        for row in journal_rows:
+            et = row["entry_type"]
+            if et in grouped and len(grouped[et]) < 2:
+                grouped[et].append(row)
+
+        state = self.journal_repo.avg_state_in_range(self.user_id, start_utc, end_utc)
+        state_snapshot = {
+            "avg_energy": state.get("avg_energy"),
+            "avg_focus": state.get("avg_focus"),
+            "avg_mood": state.get("avg_mood"),
+        }
+
+        open_loops = {
+            "open_tasks": self.task_repo.count_by_status(self.user_id, "open"),
+            "snoozed_tasks": self.task_repo.count_by_status(self.user_id, "snoozed"),
+            "pending_ack": len(self.reminder_repo.list_pending_ack(self.user_id, limit=10000)),
+        }
+
+        note = self._build_summary_note(overview, open_loops)
+
+        return {
+            "day": day,
+            "overview": overview,
+            "journal_grouped": grouped,
+            "state_snapshot": state_snapshot,
+            "open_loops": open_loops,
+            "note": note,
+        }
+
+    def build_today_summary(self) -> dict[str, Any]:
+        day = datetime.now(CST).date().isoformat()
+        return self.build_day_summary(day)
+
+    def _cst_day_to_utc_range(self, day: str) -> tuple[str, str]:
+        local_start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=CST)
+        local_end = local_start + timedelta(days=1)
+        utc_start = local_start.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        utc_end = local_end.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        return utc_start, utc_end
+
+    def _build_summary_note(self, overview: dict[str, int], open_loops: dict[str, int]) -> str:
+        done = overview["tasks_done"]
+        journal_count = overview["journal_count"]
+        pending_ack = open_loops["pending_ack"]
+        if done > 0 and journal_count > 0:
+            return "今天有持续记录，也有实际推进，可以继续保持这种小步前进 ?"
+        if done > 0:
+            return "今天有真实完成项，节奏是稳定的 ?"
+        if journal_count > 0:
+            return "今天留下了清晰的活动和状态证据，说明你没有脱离系统 ?"
+        if pending_ack > 0:
+            return "今天虽然正式完成项不多，但有真实记录和闭环动作 ?"
+        return "今天证据还不多，先补一条简短记录会更稳 ?"
+
+class EncouragementService:
+    def __init__(
+        self,
+        user_id: int,
+        username: str,
+        telegram_chat_id: str | None,
+        reminder_sender: Any | None,
+        journal_repo: JournalRepository,
+    ):
+        self.user_id = user_id
+        self.username = username
+        self.telegram_chat_id = telegram_chat_id
+        self.reminder_sender = reminder_sender
+        self.journal_repo = journal_repo
+
+    def build_today_encouragement(
+        self,
+        now: str | None = None,
+        deepseek_client: Any | None = None,
+    ) -> dict[str, Any]:
+        now_iso = now or now_utc_iso()
+        now_dt = self._parse_iso(now_iso)
+        day = now_dt.astimezone(CST).date().isoformat()
+        start_utc, end_utc = self._cst_day_to_utc_range(day)
+        rows = self.journal_repo.list_in_range(self.user_id, start_utc, end_utc, limit=50)
+
+        reflections = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "reflection"]
+        wins = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "win"]
+        checkins = [r for r in rows if str(r.get("entry_type")) == "checkin"]
+
+        used_ai = False
+        text: str
+        if deepseek_client is not None:
+            lines: list[str] = []
+            for item in rows[:10]:
+                lines.append(f"- {item['entry_type']}: {item['content']}")
+            evidence = "\n".join(lines) if lines else "- ????????"
+            prompt = (
+                f"??(????): {day}\n"
+                f"??: {self.username}\n"
+                "????????????1-2????????"
+                "??: ??????????????????????????\n"
+                f"????:\n{evidence}"
+            )
+            system_prompt = "??????????????????????????????"
+            try:
+                generated = deepseek_client.generate_encouragement(prompt=prompt, system_prompt=system_prompt)
+                if generated.strip():
+                    text = generated.strip()
+                    used_ai = True
+                else:
+                    text = self._fallback_encouragement(reflections, wins, checkins, len(rows))
+            except Exception:
+                text = self._fallback_encouragement(reflections, wins, checkins, len(rows))
+        else:
+            text = self._fallback_encouragement(reflections, wins, checkins, len(rows))
+
+        return {
+            "day": day,
+            "text": text,
+            "used_ai": used_ai,
+            "journal_count": len(rows),
+            "reflection_count": len(reflections),
+            "win_count": len(wins),
+        }
+
+    def send_today_encouragement(
+        self,
+        now: str | None = None,
+        deepseek_client: Any | None = None,
+    ) -> dict[str, Any]:
+        result = self.build_today_encouragement(now=now, deepseek_client=deepseek_client)
+        text = str(result["text"])
+        if self.telegram_chat_id and self.reminder_sender is not None and hasattr(self.reminder_sender, "send_message"):
+            message_id = self.reminder_sender.send_message(str(self.telegram_chat_id), text)
+            return {"status": "sent", "channel": "telegram", "message_id": message_id, **result}
+        return {"status": "cli_fallback", "channel": "cli", **result}
+
+    def _fallback_encouragement(
+        self,
+        reflections: list[str],
+        wins: list[str],
+        checkins: list[dict[str, Any]],
+        total_count: int,
+    ) -> str:
+        if wins:
+            return "今天有真实的小胜利，继续保持这个节奏，哪怕每次只推进一小步 ?"
+        if reflections:
+            return "你今天留下了有价值的反思，这本身就是在为下一次行动降低阻力 ?"
+        if checkins:
+            return "你今天至少做了状态签到，说明你仍在系统里，先把动作做小、继续前进 ?"
+        if total_count > 0:
+            return "今天有记录就有证据，先认可这一步，明天继续稳步推进 ?"
+        return "今天还没有留下日志也没关系，现在补一条最小记录，就重新回到节奏里 ?"
+
+    def _parse_iso(self, value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def _cst_day_to_utc_range(self, day: str) -> tuple[str, str]:
+        local_start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=CST)
+        local_end = local_start + timedelta(days=1)
+        utc_start = local_start.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        utc_end = local_end.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+        return utc_start, utc_end
+
+class LifeSystemService:
+    """Thin compatibility facade for CLI/Telegram/Web."""
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        user_id: int,
+        username: str,
+        telegram_chat_id: str | None = None,
+        reminder_sender: Any | None = None,
+        event_logger: EventLogger | None = None,
+        repositories: dict[str, Any] | None = None,
+    ):
+        self._legacy = _LegacyLifeSystemService(
+            conn=conn,
+            user_id=user_id,
+            username=username,
+            telegram_chat_id=telegram_chat_id,
+            reminder_sender=reminder_sender,
+            event_logger=event_logger,
+            repositories=repositories,
+        )
+        self.user_id = self._legacy.user_id
+        self.username = self._legacy.username
+        self.telegram_chat_id = self._legacy.telegram_chat_id
+        self.reminder_sender = self._legacy.reminder_sender
+        self.event_logger = self._legacy.event_logger
+
+        self.inbox_service = InboxService(self._legacy)
+        self.task_service = TaskService(
+            user_id=self._legacy.user_id,
+            username=self._legacy.username,
+            inbox_repo=self._legacy.inbox_repo,
+            task_repo=self._legacy.task_repo,
+            abandon_repo=self._legacy.abandon_repo,
+            event_logger=self._legacy.event_logger,
+        )
+        self.reminder_service = ReminderService(
+            user_id=self._legacy.user_id,
+            task_service=self.task_service,
+            reminder_repo=self._legacy.reminder_repo,
+            reminder_event_repo=self._legacy.reminder_event_repo,
+            event_logger=self._legacy.event_logger,
+            legacy=self._legacy,
+        )
+        self.anki_service = AnkiService(self._legacy)
+        self.journal_service = JournalService(
+            user_id=self._legacy.user_id,
+            journal_repo=self._legacy.journal_repo,
+            event_logger=self._legacy.event_logger,
+        )
+        self.summary_service = SummaryService(
+            user_id=self._legacy.user_id,
+            inbox_repo=self._legacy.inbox_repo,
+            task_repo=self._legacy.task_repo,
+            reminder_repo=self._legacy.reminder_repo,
+            reminder_event_repo=self._legacy.reminder_event_repo,
+            anki_repo=self._legacy.anki_repo,
+            journal_repo=self._legacy.journal_repo,
+        )
+        self.encouragement_service = EncouragementService(
+            user_id=self._legacy.user_id,
+            username=self._legacy.username,
+            telegram_chat_id=self._legacy.telegram_chat_id,
+            reminder_sender=self._legacy.reminder_sender,
+            journal_repo=self._legacy.journal_repo,
+        )
+
+        # Bind migrated domain services for legacy compatibility delegation.
+        self._legacy.task_service = self.task_service
+        self._legacy.reminder_service = self.reminder_service
+        self._legacy.journal_service = self.journal_service
+        self._legacy.summary_service = self.summary_service
+        self._legacy.encouragement_service = self.encouragement_service
+
+    # Inbox facade
+    def capture_inbox(self, *args: Any, **kwargs: Any) -> int:
+        return self.inbox_service.capture_inbox(*args, **kwargs)
+
+    def list_inbox(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.inbox_service.list_inbox(*args, **kwargs)
+
+    def triage_inbox_to_task(self, *args: Any, **kwargs: Any) -> int | None:
+        return self.inbox_service.triage_inbox_to_task(*args, **kwargs)
+
+    def triage_inbox_to_anki(self, *args: Any, **kwargs: Any) -> int | None:
+        return self.inbox_service.triage_inbox_to_anki(*args, **kwargs)
+
+    def archive_inbox(self, *args: Any, **kwargs: Any) -> str:
+        return self.inbox_service.archive_inbox(*args, **kwargs)
+
+    def list_new_inbox_oldest(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.inbox_service.list_new_inbox_oldest(*args, **kwargs)
+
+    def inbox_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]] | None:
+        return self.inbox_service.inbox_history(*args, **kwargs)
+
+    def triage_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.inbox_service.triage_history(*args, **kwargs)
+
+    def feedback_scan(self, *args: Any, **kwargs: Any) -> dict[str, int]:
+        return self.inbox_service.feedback_scan(*args, **kwargs)
+
+    def feedback_report(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.inbox_service.feedback_report(*args, **kwargs)
+
+    def pop_nonfatal_warnings(self) -> list[str]:
+        return self.inbox_service.pop_nonfatal_warnings()
+
+    def inbox_triage_status(self, *args: Any, **kwargs: Any) -> str:
+        return self.inbox_service.inbox_triage_status(*args, **kwargs)
+
+    # Task facade
+    def create_task(self, *args: Any, **kwargs: Any) -> int | None:
+        return self.task_service.create_task(*args, **kwargs)
+
+    def list_tasks(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.task_service.list_tasks(*args, **kwargs)
+
+    def get_task_detail(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return self.task_service.get_task_detail(*args, **kwargs)
+
+    def done_task(self, *args: Any, **kwargs: Any) -> bool:
+        return self.task_service.done_task(*args, **kwargs)
+
+    def snooze_task(self, *args: Any, **kwargs: Any) -> bool:
+        return self.task_service.snooze_task(*args, **kwargs)
+
+    def abandon_task(self, *args: Any, **kwargs: Any) -> bool:
+        return self.task_service.abandon_task(*args, **kwargs)
+
+    # Reminder facade
+    def create_reminder(self, *args: Any, **kwargs: Any) -> int | None:
+        return self.reminder_service.create_reminder(*args, **kwargs)
+
+    def due_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.reminder_service.due_reminders(*args, **kwargs)
+
+    def send_due_reminders(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.reminder_service.send_due_reminders(*args, **kwargs)
+
+    def list_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.reminder_service.list_reminders(*args, **kwargs)
+
+    def list_pending_ack_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.reminder_service.list_pending_ack_reminders(*args, **kwargs)
+
+    def ack_reminder(self, *args: Any, **kwargs: Any) -> str:
+        return self.reminder_service.ack_reminder(*args, **kwargs)
+
+    def snooze_reminder(self, *args: Any, **kwargs: Any) -> str:
+        return self.reminder_service.snooze_reminder(*args, **kwargs)
+
+    def skip_reminder(self, *args: Any, **kwargs: Any) -> str:
+        return self.reminder_service.skip_reminder(*args, **kwargs)
+
+    def show_reminder(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return self.reminder_service.show_reminder(*args, **kwargs)
+
+    def reminder_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]] | None:
+        return self.reminder_service.reminder_history(*args, **kwargs)
+
+    # Anki facade
+    def create_anki_draft(self, *args: Any, **kwargs: Any) -> int:
+        return self.anki_service.create_anki_draft(*args, **kwargs)
+
+    def list_anki_drafts(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.anki_service.list_anki_drafts(*args, **kwargs)
+
+    def list_anki_decks(self, *args: Any, **kwargs: Any) -> list[str]:
+        return self.anki_service.list_anki_decks(*args, **kwargs)
+
+    def show_anki_draft(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return self.anki_service.show_anki_draft(*args, **kwargs)
+
+    def archive_anki_draft(self, *args: Any, **kwargs: Any) -> str:
+        return self.anki_service.archive_anki_draft(*args, **kwargs)
+
+    def update_anki_draft(self, *args: Any, **kwargs: Any) -> str:
+        return self.anki_service.update_anki_draft(*args, **kwargs)
+
+    def activate_anki_drafts(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.anki_service.activate_anki_drafts(*args, **kwargs)
+
+    def list_due_anki_cards(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.anki_service.list_due_anki_cards(*args, **kwargs)
+
+    def review_anki_card(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
+        return self.anki_service.review_anki_card(*args, **kwargs)
+
+    def review_anki_cards(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.anki_service.review_anki_cards(*args, **kwargs)
+
+    def build_anki_stats(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.anki_service.build_anki_stats(*args, **kwargs)
+
+    def import_anki_json(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.anki_service.import_anki_json(*args, **kwargs)
+
+    def export_anki_drafts_csv(self, *args: Any, **kwargs: Any) -> int:
+        return self.anki_service.export_anki_drafts_csv(*args, **kwargs)
+
+    # Journal facade
+    def add_journal_entry(self, *args: Any, **kwargs: Any) -> int:
+        return self.journal_service.add_journal_entry(*args, **kwargs)
+
+    def list_journal(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.journal_service.list_journal(*args, **kwargs)
+
+    def today_journal(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return self.journal_service.today_journal(*args, **kwargs)
+
+    # Summary facade
+    def build_day_summary(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.summary_service.build_day_summary(*args, **kwargs)
+
+    def build_today_summary(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.summary_service.build_today_summary(*args, **kwargs)
+
+    # Encouragement facade
+    def build_today_encouragement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.encouragement_service.build_today_encouragement(*args, **kwargs)
+
+    def send_today_encouragement(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.encouragement_service.send_today_encouragement(*args, **kwargs)
 class InboxReviewService:
     REVIEW_WINDOW_HOUR = 20
     REVIEW_WINDOW_MINUTE = 30
