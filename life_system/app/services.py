@@ -87,13 +87,17 @@ class _LegacyLifeSystemService:
         limit: int = 50,
         include_archived: bool = False,
     ) -> list[dict[str, Any]]:
+        # delegated_to=InboxService.list_inbox
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.list_inbox(status=status, limit=limit, include_archived=include_archived)
         return self.inbox_repo.list(
             user_id=self.user_id,
             status=status,
             limit=limit,
             include_archived=include_archived,
         )
-
     def triage_inbox_to_task(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
@@ -168,17 +172,29 @@ class _LegacyLifeSystemService:
         return "archived"
 
     def list_new_inbox_oldest(self, limit: int = 5) -> list[dict[str, Any]]:
+        # delegated_to=InboxService.list_new_inbox_oldest
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.list_new_inbox_oldest(limit=limit)
         return self.inbox_repo.list_new_oldest(user_id=self.user_id, limit=limit)
-
     def inbox_history(self, inbox_item_id: int) -> list[dict[str, Any]] | None:
+        # delegated_to=InboxService.inbox_history
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.inbox_history(inbox_item_id=inbox_item_id)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return None
         return self.triage_event_repo.list_for_inbox(user_id=self.user_id, inbox_item_id=inbox_item_id)
-
     def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
+        # delegated_to=InboxService.triage_history
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.triage_history(limit=limit)
         return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
-
     def feedback_scan(self, now: str | None = None) -> dict[str, int]:
         now_iso = now or now_utc_iso()
         now_dt = self._parse_iso(now_iso)
@@ -514,6 +530,11 @@ class _LegacyLifeSystemService:
 
 
     def list_reminders(self, limit: int = 100) -> list[dict[str, Any]]:
+        # delegated_to=ReminderService.list_reminders
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.list_reminders(limit=limit)
         return self.reminder_repo.list_for_user(user_id=self.user_id, limit=limit)
 
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -525,6 +546,11 @@ class _LegacyLifeSystemService:
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
 
     def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> str:
+        # delegated_to=ReminderService.ack_reminder
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.ack_reminder(reminder_id=reminder_id, acked_via=acked_via)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
             return "not_found"
@@ -538,6 +564,11 @@ class _LegacyLifeSystemService:
         return "acknowledged"
 
     def snooze_reminder(self, reminder_id: int, remind_at: str) -> str:
+        # delegated_to=ReminderService.snooze_reminder
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.snooze_reminder(reminder_id=reminder_id, remind_at=remind_at)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
             return "not_found"
@@ -550,6 +581,11 @@ class _LegacyLifeSystemService:
         return "snoozed"
 
     def skip_reminder(self, reminder_id: int, reason: str | None = None) -> str:
+        # delegated_to=ReminderService.skip_reminder
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.skip_reminder(reminder_id=reminder_id, reason=reason)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
         if item is None:
             return "not_found"
@@ -1442,15 +1478,32 @@ class _LegacyLifeSystemService:
         return ("review", now_dt + timedelta(days=next_interval), next_interval, next_ease, lapses, 0)
 
 class InboxService:
-    def __init__(self, legacy: _LegacyLifeSystemService):
+    def __init__(
+        self,
+        user_id: int,
+        inbox_repo: InboxRepository,
+        triage_event_repo: TriageEventRepository,
+        legacy: _LegacyLifeSystemService,
+    ):
+        self.user_id = user_id
+        self.inbox_repo = inbox_repo
+        self.triage_event_repo = triage_event_repo
         self._legacy = legacy
-
     def capture_inbox(self, *args: Any, **kwargs: Any) -> int:
         return self._legacy.capture_inbox(*args, **kwargs)
 
-    def list_inbox(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.list_inbox(*args, **kwargs)
-
+    def list_inbox(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        return self.inbox_repo.list(
+            user_id=self.user_id,
+            status=status,
+            limit=limit,
+            include_archived=include_archived,
+        )
     def triage_inbox_to_task(self, *args: Any, **kwargs: Any) -> int | None:
         return self._legacy.triage_inbox_to_task(*args, **kwargs)
 
@@ -1460,15 +1513,15 @@ class InboxService:
     def archive_inbox(self, *args: Any, **kwargs: Any) -> str:
         return self._legacy.archive_inbox(*args, **kwargs)
 
-    def list_new_inbox_oldest(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.list_new_inbox_oldest(*args, **kwargs)
-
-    def inbox_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]] | None:
-        return self._legacy.inbox_history(*args, **kwargs)
-
-    def triage_history(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.triage_history(*args, **kwargs)
-
+    def list_new_inbox_oldest(self, limit: int = 5) -> list[dict[str, Any]]:
+        return self.inbox_repo.list_new_oldest(user_id=self.user_id, limit=limit)
+    def inbox_history(self, inbox_item_id: int) -> list[dict[str, Any]] | None:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return None
+        return self.triage_event_repo.list_for_inbox(user_id=self.user_id, inbox_item_id=inbox_item_id)
+    def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
     def feedback_scan(self, *args: Any, **kwargs: Any) -> dict[str, int]:
         return self._legacy.feedback_scan(*args, **kwargs)
 
@@ -1614,20 +1667,48 @@ class ReminderService:
     def send_due_reminders(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._legacy.send_due_reminders(*args, **kwargs)
 
-    def list_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.list_reminders(*args, **kwargs)
+    def list_reminders(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.reminder_repo.list_for_user(user_id=self.user_id, limit=limit)
 
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
 
-    def ack_reminder(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.ack_reminder(*args, **kwargs)
+    def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> str:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "acknowledged":
+            return "already_acknowledged"
+        now = now_utc_iso()
+        updated = self.reminder_repo.mark_acknowledged(reminder_id=reminder_id, ack_at=now, acked_via=acked_via)
+        if not updated:
+            return "not_found"
+        self._log_reminder_event(reminder_id, "acknowledged", {"acked_via": acked_via})
+        return "acknowledged"
 
-    def snooze_reminder(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.snooze_reminder(*args, **kwargs)
+    def snooze_reminder(self, reminder_id: int, remind_at: str) -> str:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "snoozed" and item["remind_at"] == remind_at:
+            return "already_snoozed_same"
+        updated = self.reminder_repo.mark_snoozed(reminder_id=reminder_id, remind_at=remind_at)
+        if not updated:
+            return "not_found"
+        self._log_reminder_event(reminder_id, "snoozed", {"remind_at": remind_at})
+        return "snoozed"
 
-    def skip_reminder(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.skip_reminder(*args, **kwargs)
+    def skip_reminder(self, reminder_id: int, reason: str | None = None) -> str:
+        item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "skipped":
+            return "already_skipped"
+        updated = self.reminder_repo.mark_skipped(reminder_id=reminder_id, skip_reason=reason)
+        if not updated:
+            return "not_found"
+        self._log_reminder_event(reminder_id, "skipped", {"reason": reason})
+        return "skipped"
 
     def show_reminder(self, reminder_id: int) -> dict[str, Any] | None:
         return self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -1971,7 +2052,12 @@ class LifeSystemService:
         self.reminder_sender = self._legacy.reminder_sender
         self.event_logger = self._legacy.event_logger
 
-        self.inbox_service = InboxService(self._legacy)
+        self.inbox_service = InboxService(
+            user_id=self._legacy.user_id,
+            inbox_repo=self._legacy.inbox_repo,
+            triage_event_repo=self._legacy.triage_event_repo,
+            legacy=self._legacy,
+        )
         self.task_service = TaskService(
             user_id=self._legacy.user_id,
             username=self._legacy.username,
