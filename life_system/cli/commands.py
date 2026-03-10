@@ -543,7 +543,7 @@ def _print_summary(summary: dict[str, object]) -> None:
     avg_focus = state.get("avg_focus") if isinstance(state, dict) else None
     avg_mood = state.get("avg_mood") if isinstance(state, dict) else None
     if avg_energy is None and avg_focus is None and avg_mood is None:
-        print("- no state data")
+        print("- 无状态数据")
     else:
         def _fmt_avg(v: object) -> str:
             return "-" if v is None else f"{float(v):.1f}"
@@ -558,10 +558,6 @@ def _print_summary(summary: dict[str, object]) -> None:
 
     print("【今日短注】")
     print(note)
-
-    dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
-    return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M")
-
 
 def _to_cst_display_with_seconds(iso_text: str) -> str:
     dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
@@ -1048,6 +1044,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     parser = build_parser()
     parser.print_help()
     return 1
+
 
 
 

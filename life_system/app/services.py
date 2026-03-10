@@ -70,7 +70,10 @@ class _LegacyLifeSystemService:
     ) -> int:
         # delegated_to=InboxService.capture_inbox
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.capture_inbox(
                 content=content,
@@ -100,7 +103,10 @@ class _LegacyLifeSystemService:
     ) -> list[dict[str, Any]]:
         # delegated_to=InboxService.list_inbox
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.list_inbox(status=status, limit=limit, include_archived=include_archived)
         return self.inbox_repo.list(
@@ -112,7 +118,10 @@ class _LegacyLifeSystemService:
     def triage_inbox_to_task(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
         # delegated_to=InboxService.triage_inbox_to_task
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.triage_inbox_to_task(inbox_item_id=inbox_item_id, created_by=created_by)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
@@ -142,7 +151,10 @@ class _LegacyLifeSystemService:
     def triage_inbox_to_anki(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
         # delegated_to=InboxService.triage_inbox_to_anki
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.triage_inbox_to_anki(inbox_item_id=inbox_item_id, created_by=created_by)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
@@ -172,7 +184,10 @@ class _LegacyLifeSystemService:
     def archive_inbox(self, inbox_item_id: int, created_by: str = "manual") -> str:
         # delegated_to=InboxService.archive_inbox
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.archive_inbox(inbox_item_id=inbox_item_id, created_by=created_by)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
@@ -199,14 +214,20 @@ class _LegacyLifeSystemService:
     def list_new_inbox_oldest(self, limit: int = 5) -> list[dict[str, Any]]:
         # delegated_to=InboxService.list_new_inbox_oldest
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.list_new_inbox_oldest(limit=limit)
         return self.inbox_repo.list_new_oldest(user_id=self.user_id, limit=limit)
     def inbox_history(self, inbox_item_id: int) -> list[dict[str, Any]] | None:
         # delegated_to=InboxService.inbox_history
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.inbox_history(inbox_item_id=inbox_item_id)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
@@ -216,14 +237,20 @@ class _LegacyLifeSystemService:
     def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
         # delegated_to=InboxService.triage_history
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.triage_history(limit=limit)
         return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
     def feedback_scan(self, now: str | None = None) -> dict[str, int]:
         # delegated_to=InboxService.feedback_scan
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.feedback_scan(now=now)
         now_iso = now or now_utc_iso()
@@ -365,7 +392,10 @@ class _LegacyLifeSystemService:
     def feedback_report(self, limit: int = 50) -> list[dict[str, Any]]:
         # delegated_to=InboxService.feedback_report
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.feedback_report(limit=limit)
         return self.feedback_repo.list_recent(user_id=self.user_id, limit=limit)
@@ -377,7 +407,10 @@ class _LegacyLifeSystemService:
     def inbox_triage_status(self, inbox_item_id: int) -> str:
         # delegated_to=InboxService.inbox_triage_status
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is None:
+            raise RuntimeError("inbox_service_not_initialized")
         if inbox_service is not None:
             return inbox_service.inbox_triage_status(inbox_item_id=inbox_item_id)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
@@ -397,6 +430,8 @@ class _LegacyLifeSystemService:
         inbox_item_id: int | None = None,
     ) -> int | None:
         task_service = getattr(self, "task_service", None)
+        if task_service is None:
+            raise RuntimeError("task_service_not_initialized")
         if task_service is not None:
             return task_service.create_task(
                 title=title,
@@ -425,6 +460,8 @@ class _LegacyLifeSystemService:
 
     def list_tasks(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         task_service = getattr(self, "task_service", None)
+        if task_service is None:
+            raise RuntimeError("task_service_not_initialized")
         if task_service is not None:
             return task_service.list_tasks(status=status, limit=limit)
         return self.task_repo.list(user_id=self.user_id, status=status, limit=limit)
@@ -432,6 +469,8 @@ class _LegacyLifeSystemService:
 
     def get_task_detail(self, task_id: int) -> dict[str, Any] | None:
         task_service = getattr(self, "task_service", None)
+        if task_service is None:
+            raise RuntimeError("task_service_not_initialized")
         if task_service is not None:
             return task_service.get_task_detail(task_id)
         rows = self.task_repo.list(user_id=self.user_id, status=None, limit=1000)
@@ -442,6 +481,8 @@ class _LegacyLifeSystemService:
 
     def done_task(self, task_id: int) -> bool:
         task_service = getattr(self, "task_service", None)
+        if task_service is None:
+            raise RuntimeError("task_service_not_initialized")
         if task_service is not None:
             return task_service.done_task(task_id)
         updated = self.task_repo.mark_done(user_id=self.user_id, task_id=task_id, now=now_utc_iso())
@@ -451,6 +492,8 @@ class _LegacyLifeSystemService:
 
     def snooze_task(self, task_id: int, snooze_until: str) -> bool:
         task_service = getattr(self, "task_service", None)
+        if task_service is None:
+            raise RuntimeError("task_service_not_initialized")
         if task_service is not None:
             return task_service.snooze_task(task_id, snooze_until)
         updated = self.task_repo.mark_snoozed(
@@ -471,6 +514,8 @@ class _LegacyLifeSystemService:
         energy_level: int | None = None,
     ) -> bool:
         task_service = getattr(self, "task_service", None)
+        if task_service is None:
+            raise RuntimeError("task_service_not_initialized")
         if task_service is not None:
             return task_service.abandon_task(
                 task_id=task_id,
@@ -495,6 +540,8 @@ class _LegacyLifeSystemService:
 
     def create_reminder(self, task_id: int, remind_at: str, channel: str = "cli") -> int | None:
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.create_reminder(task_id=task_id, remind_at=remind_at, channel=channel)
 
@@ -518,7 +565,10 @@ class _LegacyLifeSystemService:
     def due_reminders(self, now: str | None = None, limit: int = 50, send: bool = False) -> list[dict[str, Any]]:
         # delegated_to=ReminderService.due_reminders
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.due_reminders(now=now, limit=limit, send=send)
         pivot_iso = now or now_utc_iso()
@@ -544,7 +594,10 @@ class _LegacyLifeSystemService:
     def send_due_reminders(self, now: str | None = None, limit: int = 50) -> dict[str, Any]:
         # delegated_to=ReminderService.send_due_reminders
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.send_due_reminders(now=now, limit=limit)
         pivot_iso = now or now_utc_iso()
@@ -577,7 +630,10 @@ class _LegacyLifeSystemService:
     def list_reminders(self, limit: int = 100) -> list[dict[str, Any]]:
         # delegated_to=ReminderService.list_reminders
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.list_reminders(limit=limit)
         return self.reminder_repo.list_for_user(user_id=self.user_id, limit=limit)
@@ -585,7 +641,10 @@ class _LegacyLifeSystemService:
     def list_pending_ack_reminders(self, limit: int = 50) -> list[dict[str, Any]]:
         # delegated_to=ReminderService.list_pending_ack_reminders
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.list_pending_ack_reminders(limit=limit)
         return self.reminder_repo.list_pending_ack(user_id=self.user_id, limit=limit)
@@ -593,7 +652,10 @@ class _LegacyLifeSystemService:
     def ack_reminder(self, reminder_id: int, acked_via: str = "cli") -> str:
         # delegated_to=ReminderService.ack_reminder
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.ack_reminder(reminder_id=reminder_id, acked_via=acked_via)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -611,7 +673,10 @@ class _LegacyLifeSystemService:
     def snooze_reminder(self, reminder_id: int, remind_at: str) -> str:
         # delegated_to=ReminderService.snooze_reminder
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.snooze_reminder(reminder_id=reminder_id, remind_at=remind_at)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -628,7 +693,10 @@ class _LegacyLifeSystemService:
     def skip_reminder(self, reminder_id: int, reason: str | None = None) -> str:
         # delegated_to=ReminderService.skip_reminder
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.skip_reminder(reminder_id=reminder_id, reason=reason)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -645,7 +713,10 @@ class _LegacyLifeSystemService:
     def show_reminder(self, reminder_id: int) -> dict[str, Any] | None:
         # delegated_to=ReminderService.show_reminder
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.show_reminder(reminder_id=reminder_id)
         return self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -653,7 +724,10 @@ class _LegacyLifeSystemService:
     def reminder_history(self, reminder_id: int) -> list[dict[str, Any]] | None:
         # delegated_to=ReminderService.reminder_history
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is None:
+            raise RuntimeError("reminder_service_not_initialized")
         if reminder_service is not None:
             return reminder_service.reminder_history(reminder_id=reminder_id)
         item = self.reminder_repo.get_for_user(user_id=self.user_id, reminder_id=reminder_id)
@@ -692,7 +766,10 @@ class _LegacyLifeSystemService:
     ) -> list[dict[str, Any]]:
         # delegated_to=AnkiService.list_anki_drafts
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         anki_service = getattr(self, "anki_service", None)
+        if anki_service is None:
+            raise RuntimeError("anki_service_not_initialized")
         if anki_service is not None:
             return anki_service.list_anki_drafts(status=status, limit=limit, deck_name=deck_name)
         return self.anki_repo.list(user_id=self.user_id, status=status, limit=limit, deck_name=deck_name)
@@ -700,7 +777,10 @@ class _LegacyLifeSystemService:
     def list_anki_decks(self) -> list[str]:
         # delegated_to=AnkiService.list_anki_decks
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         anki_service = getattr(self, "anki_service", None)
+        if anki_service is None:
+            raise RuntimeError("anki_service_not_initialized")
         if anki_service is not None:
             return anki_service.list_anki_decks()
         return self.anki_repo.list_deck_names(user_id=self.user_id)
@@ -708,7 +788,10 @@ class _LegacyLifeSystemService:
     def show_anki_draft(self, draft_id: int) -> dict[str, Any] | None:
         # delegated_to=AnkiService.show_anki_draft
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         anki_service = getattr(self, "anki_service", None)
+        if anki_service is None:
+            raise RuntimeError("anki_service_not_initialized")
         if anki_service is not None:
             return anki_service.show_anki_draft(draft_id=draft_id)
         return self.anki_repo.get_with_trace(user_id=self.user_id, draft_id=draft_id)
@@ -716,7 +799,10 @@ class _LegacyLifeSystemService:
     def archive_anki_draft(self, draft_id: int) -> str:
         # delegated_to=AnkiService.archive_anki_draft
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         anki_service = getattr(self, "anki_service", None)
+        if anki_service is None:
+            raise RuntimeError("anki_service_not_initialized")
         if anki_service is not None:
             return anki_service.archive_anki_draft(draft_id=draft_id)
         status = self.anki_repo.archive(user_id=self.user_id, draft_id=draft_id)
@@ -734,7 +820,10 @@ class _LegacyLifeSystemService:
     ) -> str:
         # delegated_to=AnkiService.update_anki_draft
         # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
         anki_service = getattr(self, "anki_service", None)
+        if anki_service is None:
+            raise RuntimeError("anki_service_not_initialized")
         if anki_service is not None:
             return anki_service.update_anki_draft(
                 draft_id=draft_id,
@@ -800,6 +889,9 @@ class _LegacyLifeSystemService:
         input_set = {int(x) for x in draft_ids}
         found_set = {int(d["id"]) for d in drafts}
         for missing_id in sorted(input_set - found_set):
+        # delegated_to=AnkiService.activate_anki_drafts
+        # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
             skipped_items.append({"draft_id": missing_id, "reason": "not_found"})
 
         duplicate_count = sum(1 for item in skipped_items if item.get("reason") == "duplicate")
@@ -1108,6 +1200,8 @@ class _LegacyLifeSystemService:
         tags: str | None = None,
     ) -> int:
         journal_service = getattr(self, "journal_service", None)
+        if journal_service is None:
+            raise RuntimeError("journal_service_not_initialized")
         if journal_service is not None:
             return journal_service.add_journal_entry(
                 content=content,
@@ -1136,12 +1230,16 @@ class _LegacyLifeSystemService:
 
     def list_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
         journal_service = getattr(self, "journal_service", None)
+        if journal_service is None:
+            raise RuntimeError("journal_service_not_initialized")
         if journal_service is not None:
             return journal_service.list_journal(limit=limit, entry_type=entry_type)
         return self.journal_repo.list(user_id=self.user_id, limit=limit, entry_type=entry_type)
 
     def today_journal(self, limit: int = 50, entry_type: str | None = None) -> list[dict[str, Any]]:
         journal_service = getattr(self, "journal_service", None)
+        if journal_service is None:
+            raise RuntimeError("journal_service_not_initialized")
         if journal_service is not None:
             return journal_service.today_journal(limit=limit, entry_type=entry_type)
         day_prefix = datetime.now(timezone.utc).date().isoformat()
@@ -1157,6 +1255,8 @@ class _LegacyLifeSystemService:
         deepseek_client: Any | None = None,
     ) -> dict[str, Any]:
         encouragement_service = getattr(self, "encouragement_service", None)
+        if encouragement_service is None:
+            raise RuntimeError("encouragement_service_not_initialized")
         if encouragement_service is not None:
             return encouragement_service.build_today_encouragement(now=now, deepseek_client=deepseek_client)
 
@@ -1188,6 +1288,9 @@ class _LegacyLifeSystemService:
             try:
                 generated = deepseek_client.generate_encouragement(prompt=prompt, system_prompt=system_prompt)
                 if generated.strip():
+        # delegated_to=EncouragementService.build_today_encouragement
+        # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
                     text = generated.strip()
                     used_ai = True
                 else:
@@ -1212,12 +1315,17 @@ class _LegacyLifeSystemService:
         deepseek_client: Any | None = None,
     ) -> dict[str, Any]:
         encouragement_service = getattr(self, "encouragement_service", None)
+        if encouragement_service is None:
+            raise RuntimeError("encouragement_service_not_initialized")
         if encouragement_service is not None:
             return encouragement_service.send_today_encouragement(now=now, deepseek_client=deepseek_client)
 
         result = self.build_today_encouragement(now=now, deepseek_client=deepseek_client)
         text = str(result["text"])
         if self.telegram_chat_id and self.reminder_sender is not None and hasattr(self.reminder_sender, "send_message"):
+        # delegated_to=EncouragementService.send_today_encouragement
+        # fallback_reason=legacy_direct_instantiation_compat
+        # fallback_removed=true
             message_id = self.reminder_sender.send_message(str(self.telegram_chat_id), text)
             return {"status": "sent", "channel": "telegram", "message_id": message_id, **result}
         return {"status": "cli_fallback", "channel": "cli", **result}
@@ -1241,6 +1349,8 @@ class _LegacyLifeSystemService:
 
     def build_day_summary(self, day: str) -> dict[str, Any]:
         summary_service = getattr(self, "summary_service", None)
+        if summary_service is None:
+            raise RuntimeError("summary_service_not_initialized")
         if summary_service is not None:
             return summary_service.build_day_summary(day)
 
@@ -1304,6 +1414,8 @@ class _LegacyLifeSystemService:
 
     def build_today_summary(self) -> dict[str, Any]:
         summary_service = getattr(self, "summary_service", None)
+        if summary_service is None:
+            raise RuntimeError("summary_service_not_initialized")
         if summary_service is not None:
             return summary_service.build_today_summary()
 
@@ -1552,7 +1664,6 @@ class _LegacyLifeSystemService:
         next_ease = min(3.5, ease_factor + 0.15)
         next_interval = max(base_interval + 2, round(base_interval * next_ease * 1.3))
         return ("review", now_dt + timedelta(days=next_interval), next_interval, next_ease, lapses, 0)
-
 class InboxService:
     def __init__(
         self,
@@ -2427,14 +2538,14 @@ class SummaryService:
         journal_count = overview["journal_count"]
         pending_ack = open_loops["pending_ack"]
         if done > 0 and journal_count > 0:
-            return "今天有持续记录，也有实际推进，可以继续保持这种小步前进 ?"
+            return "今天有持续记录，也有实际推进，可以继续保持这种小步前进。"
         if done > 0:
-            return "今天有真实完成项，节奏是稳定的 ?"
+            return "今天有真实完成项，节奏是稳定的。"
         if journal_count > 0:
-            return "今天留下了清晰的活动和状态证据，说明你没有脱离系统 ?"
+            return "今天留下了清晰的活动和状态证据，说明你没有脱离系统。"
         if pending_ack > 0:
-            return "今天虽然正式完成项不多，但有真实记录和闭环动作 ?"
-        return "今天证据还不多，先补一条简短记录会更稳 ?"
+            return "今天虽然正式完成项不多，但有真实记录和闭环动作。"
+        return "今天证据还不多，先补一条简短记录会更稳。"
 
 class EncouragementService:
     def __init__(
@@ -3053,4 +3164,6 @@ class InboxReviewService:
 
     def _to_iso(self, value: datetime) -> str:
         return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
+
+
 
