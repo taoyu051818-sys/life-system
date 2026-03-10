@@ -1,0 +1,15 @@
+﻿{% extends "base.html" %}
+{% block title %}Journal | Life System{% endblock %}
+{% block content %}
+<section class="card journal-page">
+  <div class="journal-header d-flex flex-wrap">
+    <div>
+      <h1>Journal</h1>
+      <p class="muted">history (limit={{ limit }})</p>
+    </div>
+  </div>
+  <div class="journal-container">
+    {% include "partials/_journal_panel.html" %}
+  </div>
+</section>
+{% endblock %}

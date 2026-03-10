@@ -4,6 +4,18 @@ import sqlite3
 from typing import Any
 
 
+def _dict_or_none(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    return dict(row) if row is not None else None
+
+
+def _dicts(rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+    return [dict(row) for row in rows]
+
+
+def _count(row: sqlite3.Row) -> int:
+    return int(row["c"])
+
+
 class UserRepository:
     def __init__(self, conn: sqlite3.Connection):
         self.conn = conn
@@ -17,9 +29,7 @@ class UserRepository:
             """,
             (user_id,),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def get_by_username(self, username: str) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -30,9 +40,7 @@ class UserRepository:
             """,
             (username,),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def list_all(self) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -42,7 +50,7 @@ class UserRepository:
             ORDER BY username ASC
             """
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def add(self, username: str, display_name: str | None, created_at: str) -> int | None:
         try:
@@ -103,9 +111,7 @@ class UserRepository:
                 """,
                 (normalized,),
             ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
 
 class InboxRepository:
@@ -180,7 +186,7 @@ class InboxRepository:
                     """,
                     (user_id, limit),
                 ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def get(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -193,9 +199,7 @@ class InboxRepository:
             """,
             (inbox_item_id, user_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def mark_triaged(self, user_id: int, inbox_item_id: int, triaged_at: str) -> int:
         cur = self.conn.execute(
@@ -226,49 +230,49 @@ class InboxRepository:
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_captured_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_triaged_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND triaged_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_triaged_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND triaged_at >= ? AND triaged_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_archived_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND archived_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_archived_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND archived_at >= ? AND archived_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_unprocessed(self, user_id: int) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM inbox_items WHERE user_id = ? AND status = 'new'",
             (user_id,),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def oldest_unprocessed_created_at(self, user_id: int) -> str | None:
         row = self.conn.execute(
@@ -298,7 +302,7 @@ class InboxRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_new_oldest(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -313,7 +317,7 @@ class InboxRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
 
 class TaskRepository:
@@ -365,7 +369,7 @@ class TaskRepository:
                 """,
                 (user_id, limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def mark_done(self, user_id: int, task_id: int, now: str) -> int:
         cur = self.conn.execute(
@@ -412,44 +416,42 @@ class TaskRepository:
             """,
             (task_id, user_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def count_created_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_created_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_done_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND completed_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_done_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND completed_at >= ? AND completed_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_snoozed_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = 'snoozed' AND updated_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_snoozed_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
@@ -460,28 +462,28 @@ class TaskRepository:
             """,
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_abandoned_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND abandoned_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_abandoned_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND abandoned_at >= ? AND abandoned_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_by_status(self, user_id: int, status: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE user_id = ? AND status = ?",
             (user_id, status),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
 
 class ReminderRepository:
@@ -516,7 +518,7 @@ class ReminderRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_pending_ack(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -539,7 +541,7 @@ class ReminderRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def get_for_user(self, user_id: int, reminder_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -556,9 +558,7 @@ class ReminderRepository:
             """,
             (reminder_id, user_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
 
     def list_for_user(self, user_id: int, limit: int) -> list[dict[str, Any]]:
@@ -587,7 +587,7 @@ class ReminderRepository:
             """,
             (user_id, user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def update_delivery(
         self,
@@ -714,7 +714,7 @@ class ReminderEventRepository:
             """,
             (user_id, reminder_id),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def count_by_day_and_type(self, user_id: int, day: str, event_type: str) -> int:
         row = self.conn.execute(
@@ -725,7 +725,7 @@ class ReminderEventRepository:
             """,
             (user_id, event_type, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_in_range_and_type(self, user_id: int, start_iso: str, end_iso: str, event_type: str) -> int:
         row = self.conn.execute(
@@ -736,7 +736,7 @@ class ReminderEventRepository:
             """,
             (user_id, event_type, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
 
 class AbandonmentLogRepository:
@@ -790,30 +790,93 @@ class AnkiDraftRepository:
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def list(self, user_id: int, status: str | None, limit: int) -> list[dict[str, Any]]:
+    def list(
+        self,
+        user_id: int,
+        status: str | None,
+        limit: int,
+        deck_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        sql = """
+            SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
+            FROM anki_drafts
+            WHERE user_id = ?
+        """
+        params: list[Any] = [user_id]
         if status:
-            rows = self.conn.execute(
-                """
-                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
-                FROM anki_drafts
-                WHERE user_id = ? AND status = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (user_id, status, limit),
-            ).fetchall()
-        else:
-            rows = self.conn.execute(
-                """
-                SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
-                FROM anki_drafts
-                WHERE user_id = ?
-                ORDER BY id DESC
-                LIMIT ?
-                """,
-                (user_id, limit),
-            ).fetchall()
-        return [dict(row) for row in rows]
+            sql += " AND status = ?"
+            params.append(status)
+        if deck_name:
+            sql += " AND deck_name = ?"
+            params.append(deck_name)
+        sql += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(sql, params).fetchall()
+        return _dicts(rows)
+
+    def list_deck_names(self, user_id: int) -> list[str]:
+        rows = self.conn.execute(
+            """
+            SELECT DISTINCT deck_name
+            FROM anki_drafts
+            WHERE user_id = ? AND deck_name IS NOT NULL AND deck_name != ''
+            ORDER BY deck_name ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [str(r[0]) for r in rows]
+
+    def list_by_ids(self, user_id: int, draft_ids: list[int]) -> list[dict[str, Any]]:
+        if not draft_ids:
+            return []
+        placeholders = ", ".join("?" for _ in draft_ids)
+        rows = self.conn.execute(
+            f"""
+            SELECT id, source_type, source_id, deck_name, front, back, tags, status, created_at, exported_at
+            FROM anki_drafts
+            WHERE user_id = ? AND id IN ({placeholders})
+            ORDER BY created_at DESC, id DESC
+            """,
+            [user_id, *draft_ids],
+        ).fetchall()
+        return _dicts(rows)
+
+    def count_all(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return _count(row)
+
+    def count_non_archived(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND status != 'archived'",
+            (user_id,),
+        ).fetchone()
+        return _count(row)
+
+    def count_created_since(self, user_id: int, start_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+        return _count(row)
+
+    def deck_counts(self, user_id: int) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(deck_name, ''), 'default') AS deck_name,
+              COUNT(*) AS draft_total,
+              SUM(CASE WHEN status != 'archived' THEN 1 ELSE 0 END) AS draft_non_archived
+            FROM anki_drafts
+            WHERE user_id = ?
+            GROUP BY COALESCE(NULLIF(deck_name, ''), 'default')
+            ORDER BY deck_name ASC
+            """,
+            (user_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def list_all(self, user_id: int, only_new: bool = False) -> list[dict[str, Any]]:
         if only_new:
@@ -836,7 +899,7 @@ class AnkiDraftRepository:
                 """,
                 (user_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def get_with_trace(self, user_id: int, draft_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -876,9 +939,7 @@ class AnkiDraftRepository:
             """,
             (user_id, draft_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def archive(self, user_id: int, draft_id: int) -> str:
         row = self.conn.execute(
@@ -983,28 +1044,273 @@ class AnkiDraftRepository:
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_created_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_exported_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND exported_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_exported_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM anki_drafts WHERE user_id = ? AND exported_at >= ? AND exported_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
+
+
+class AnkiCardRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def find_by_dedupe_key(self, user_id: int, dedupe_key: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              last_reviewed_at, interval_days, ease_factor, reps, lapses, learning_step,
+              created_at, updated_at, archived_at
+            FROM anki_cards
+            WHERE user_id = ? AND dedupe_key = ?
+            LIMIT 1
+            """,
+            (user_id, dedupe_key),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def create(
+        self,
+        user_id: int,
+        draft_id: int | None,
+        front: str,
+        back: str,
+        tags: str | None,
+        deck: str,
+        dedupe_key: str,
+        state: str,
+        due_at: str,
+        created_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO anki_cards(
+              user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              interval_days, ease_factor, reps, lapses, learning_step, created_at, updated_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 2.5, 0, 0, 0, ?, ?)
+            """,
+            (user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at, created_at, created_at),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get(self, user_id: int, card_id: int) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              last_reviewed_at, interval_days, ease_factor, reps, lapses, learning_step,
+              created_at, updated_at, archived_at
+            FROM anki_cards
+            WHERE user_id = ? AND id = ?
+            """,
+            (user_id, card_id),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_due(self, user_id: int, now_iso: str, limit: int, deck_name: str | None = None) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, user_id, draft_id, front, back, tags, deck, dedupe_key, state, due_at,
+              last_reviewed_at, interval_days, ease_factor, reps, lapses, learning_step,
+              created_at, updated_at, archived_at
+            FROM anki_cards
+            WHERE user_id = ?
+              AND state IN ('new', 'learning', 'review', 'relearning')
+              AND due_at <= ?
+              AND (? IS NULL OR deck = ?)
+            ORDER BY due_at ASC, id ASC
+            LIMIT ?
+            """,
+            (user_id, now_iso, deck_name, deck_name, limit),
+        ).fetchall()
+        return _dicts(rows)
+
+    def count_all(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return _count(row)
+
+    def count_active(self, user_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ? AND state != 'archived'",
+            (user_id,),
+        ).fetchone()
+        return _count(row)
+
+    def count_due(self, user_id: int, now_iso: str, deck_name: str | None = None) -> int:
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM anki_cards
+            WHERE user_id = ?
+              AND state IN ('new', 'learning', 'review', 'relearning')
+              AND due_at <= ?
+              AND (? IS NULL OR deck = ?)
+            """,
+            (user_id, now_iso, deck_name, deck_name),
+        ).fetchone()
+        return _count(row)
+
+    def count_created_since(self, user_id: int, start_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_cards WHERE user_id = ? AND created_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+        return _count(row)
+
+    def deck_counts(self, user_id: int, now_iso: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              COALESCE(NULLIF(deck, ''), 'default') AS deck_name,
+              COUNT(*) AS active_cards,
+              SUM(CASE WHEN state IN ('new', 'learning', 'review', 'relearning') AND due_at <= ? THEN 1 ELSE 0 END) AS due_cards
+            FROM anki_cards
+            WHERE user_id = ? AND state != 'archived'
+            GROUP BY COALESCE(NULLIF(deck, ''), 'default')
+            ORDER BY deck_name ASC
+            """,
+            (now_iso, user_id),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_review_state(
+        self,
+        user_id: int,
+        card_id: int,
+        state: str,
+        due_at: str,
+        last_reviewed_at: str,
+        interval_days: int,
+        ease_factor: float,
+        reps: int,
+        lapses: int,
+        learning_step: int,
+        updated_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            UPDATE anki_cards
+            SET
+              state = ?,
+              due_at = ?,
+              last_reviewed_at = ?,
+              interval_days = ?,
+              ease_factor = ?,
+              reps = ?,
+              lapses = ?,
+              learning_step = ?,
+              updated_at = ?
+            WHERE user_id = ? AND id = ?
+            """,
+            (
+                state,
+                due_at,
+                last_reviewed_at,
+                interval_days,
+                ease_factor,
+                reps,
+                lapses,
+                learning_step,
+                updated_at,
+                user_id,
+                card_id,
+            ),
+        )
+        self.conn.commit()
+        return cur.rowcount
+
+
+class AnkiReviewEventRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        user_id: int,
+        card_id: int,
+        rating: str,
+        state_before: str,
+        state_after: str,
+        due_before: str | None,
+        due_after: str | None,
+        interval_before: int,
+        interval_after: int,
+        ease_before: float,
+        ease_after: float,
+        reviewed_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO anki_review_events(
+              user_id, card_id, rating, state_before, state_after, due_before, due_after,
+              interval_before, interval_after, ease_before, ease_after, reviewed_at
+            )
+            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                card_id,
+                rating,
+                state_before,
+                state_after,
+                due_before,
+                due_after,
+                interval_before,
+                interval_after,
+                ease_before,
+                ease_after,
+                reviewed_at,
+            ),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+    def count_since(self, user_id: int, start_iso: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS c FROM anki_review_events WHERE user_id = ? AND reviewed_at >= ?",
+            (user_id, start_iso),
+        ).fetchone()
+        return _count(row)
+
+    def rating_distribution_since(self, user_id: int, start_iso: str) -> dict[str, int]:
+        rows = self.conn.execute(
+            """
+            SELECT rating, COUNT(*) AS c
+            FROM anki_review_events
+            WHERE user_id = ? AND reviewed_at >= ?
+            GROUP BY rating
+            """,
+            (user_id, start_iso),
+        ).fetchall()
+        result = {"again": 0, "hard": 0, "good": 0, "easy": 0}
+        for row in rows:
+            key = str(row["rating"])
+            if key in result:
+                result[key] = int(row["c"])
+        return result
 
 class JournalRepository:
     def __init__(self, conn: sqlite3.Connection):
@@ -1074,7 +1380,7 @@ class JournalRepository:
                 """,
                 (user_id, limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def today(self, user_id: int, day_prefix: str, limit: int, entry_type: str | None = None) -> list[dict[str, Any]]:
         if entry_type:
@@ -1103,21 +1409,21 @@ class JournalRepository:
                 """,
                 (user_id, f"{day_prefix}%", limit),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def count_by_day(self, user_id: int, day: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM journal_entries WHERE user_id = ? AND created_at LIKE ?",
             (user_id, f"{day}%"),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def count_in_range(self, user_id: int, start_iso: str, end_iso: str) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) AS c FROM journal_entries WHERE user_id = ? AND created_at >= ? AND created_at < ?",
             (user_id, start_iso, end_iso),
         ).fetchone()
-        return int(row["c"])
+        return _count(row)
 
     def avg_state_by_day(self, user_id: int, day: str) -> dict[str, Any]:
         row = self.conn.execute(
@@ -1160,7 +1466,7 @@ class JournalRepository:
             """,
             (user_id, f"{day}%", limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_in_range(self, user_id: int, start_iso: str, end_iso: str, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1175,7 +1481,7 @@ class JournalRepository:
             """,
             (user_id, start_iso, end_iso, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
 
 def created_at_now() -> str:
@@ -1183,6 +1489,67 @@ def created_at_now() -> str:
     from life_system.infra.db import now_utc_iso
 
     return now_utc_iso()
+
+
+class ShareTokenRepository:
+    def __init__(self, conn: sqlite3.Connection):
+        self.conn = conn
+
+    def create(
+        self,
+        user_id: int,
+        scope: str,
+        token_hash: str,
+        expires_at: str,
+        max_uses: int,
+        created_at: str,
+    ) -> int:
+        cur = self.conn.execute(
+            """
+            INSERT INTO share_tokens(
+              user_id, scope, token_hash, expires_at, max_uses, used_count, created_at
+            )
+            VALUES(?, ?, ?, ?, ?, 0, ?)
+            """,
+            (user_id, scope, token_hash, expires_at, max_uses, created_at),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def get_active_by_hash(self, scope: str, token_hash: str, now_iso: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            """
+            SELECT
+              id, user_id, scope, token_hash, expires_at,
+              max_uses, used_count, created_at, last_used_at, revoked_at
+            FROM share_tokens
+            WHERE scope = ?
+              AND token_hash = ?
+              AND revoked_at IS NULL
+              AND expires_at > ?
+              AND used_count < max_uses
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (scope, token_hash, now_iso),
+        ).fetchone()
+        return _dict_or_none(row)
+
+    def consume(self, token_id: int, now_iso: str) -> bool:
+        cur = self.conn.execute(
+            """
+            UPDATE share_tokens
+            SET used_count = used_count + 1,
+                last_used_at = ?
+            WHERE id = ?
+              AND revoked_at IS NULL
+              AND expires_at > ?
+              AND used_count < max_uses
+            """,
+            (now_iso, token_id, now_iso),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
 
 class AppStateRepository:
@@ -1216,7 +1583,7 @@ class AppStateRepository:
             """,
             (f"{key_prefix}%",),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
 
 class TriageEventRepository:
@@ -1272,7 +1639,7 @@ class TriageEventRepository:
             """,
             (user_id, inbox_item_id),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def list_recent(self, user_id: int, limit: int) -> list[dict[str, Any]]:
         rows = self.conn.execute(
@@ -1287,7 +1654,7 @@ class TriageEventRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
 
     def first_for_inbox(self, user_id: int, inbox_item_id: int) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -1302,9 +1669,7 @@ class TriageEventRepository:
             """,
             (user_id, inbox_item_id),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
     def first_in_window(self, user_id: int, start_at: str, end_at: str) -> dict[str, Any] | None:
         row = self.conn.execute(
@@ -1319,9 +1684,7 @@ class TriageEventRepository:
             """,
             (user_id, start_at, end_at),
         ).fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        return _dict_or_none(row)
 
 
 class InboxFeedbackSignalRepository:
@@ -1379,7 +1742,10 @@ class InboxFeedbackSignalRepository:
             """,
             (user_id, limit),
         ).fetchall()
-        return [dict(row) for row in rows]
+        return _dicts(rows)
+
+
+
 
 
 

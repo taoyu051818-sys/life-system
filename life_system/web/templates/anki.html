@@ -1,0 +1,9 @@
+﻿{% extends "base.html" %}
+{% block title %}Anki | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Anki Drafts</h1>
+  <p><a class="btn small ghost" href="/anki/review">Go to Review</a> <a class="btn small ghost" href="/anki/stats">Go to Stats</a></p>
+  {% include "partials/_anki_panel.html" %}
+</section>
+{% endblock %}

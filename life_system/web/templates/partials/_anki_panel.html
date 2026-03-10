@@ -1,0 +1,38 @@
+<div id="anki-panel">
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  <section class="card nested">
+    <h3>Import JSON</h3>
+    <p class="muted">Paste AI-generated JSON. Supports one object or an array. Required: front/back. Optional: tags, deck.</p>
+    <pre class="json-sample">{
+  "front": "photosynthesis definition",
+  "back": "process by which green plants convert light energy",
+  "tags": ["biology", "plants"],
+  "deck": "default"
+}
+
+[
+  {"front": "mitosis?", "back": "cell division", "tags": ["biology"], "deck": "default"},
+  {"front": "GDP meaning", "back": "Gross Domestic Product", "tags": "economics"}
+]</pre>
+
+    <form class="stack-form" hx-post="/anki/import-json" hx-target="#anki-panel" hx-swap="outerHTML">
+      <textarea name="raw_json" rows="10" placeholder="paste JSON here">{{ import_json }}</textarea>
+      <button class="btn" type="submit">Import JSON</button>
+    </form>
+
+    {% if import_errors %}
+    <div class="error-box">
+      <strong>Import errors:</strong>
+      <ul>
+        {% for e in import_errors %}
+        <li>index={{ e.index if e.index is not none else '-' }} reason={{ e.reason }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </section>
+
+  {% include "partials/_anki_drafts_panel.html" %}
+  {% include "partials/_anki_due_cards_panel.html" %}
+</div>

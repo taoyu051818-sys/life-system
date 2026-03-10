@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -19,10 +19,13 @@ from life_system.infra.repositories import UserRepository
 CST = timezone(timedelta(hours=8), name="Asia/Shanghai")
 SESSION_KEY = "web_authed"
 SESSION_UNTIL_KEY = "web_auth_until"
+SHARE_SESSION_SCOPE_KEY = "web_share_scope"
+SHARE_SESSION_USER_ID_KEY = "web_share_user_id"
+SHARE_SESSION_UNTIL_KEY = "web_share_until"
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
-    app = FastAPI(title="Life System Web", version="0.3.0")
+    app = FastAPI(title="Life System Web", version="0.4.0")
 
     current_db_path = resolve_db_path(db_path or os.getenv("LIFE_SYSTEM_DB"))
     ensure_database(current_db_path)
@@ -43,8 +46,57 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(web_dir / "static")), name="static")
 
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'sha256-pgn1TCGZX6O77zDvy0oTODMOxemn0oj0LeCnQTRj7Kg='; "
+        "img-src 'self' data:;"
+    )
+
+    @app.middleware("http")
+    async def add_security_and_cache_headers(request: Request, call_next: Any) -> Any:
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = csp
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        else:
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def _resolve_active_page(path: str) -> str | None:
+        if path == "/":
+            return "home"
+        if path.startswith("/inbox"):
+            return "inbox"
+        if path.startswith("/tasks"):
+            return "tasks"
+        if path.startswith("/reminders"):
+            return "reminders"
+        if path.startswith("/journal"):
+            return "journal"
+        if path.startswith("/anki/review"):
+            return "anki_review"
+        if path.startswith("/anki/stats"):
+            return "anki_stats"
+        if path == "/anki":
+            return "anki"
+        return None
+
     def _base_ctx(request: Request) -> dict[str, Any]:
-        return {"request": request, "active_user": active_username, "logged_in": _is_authenticated(request)}
+        return {
+            "request": request,
+            "active_user": active_username,
+            "logged_in": _is_authenticated(request),
+            "active_page": _resolve_active_page(request.url.path),
+        }
+
+    def _build_anki_review_service(conn: Any, request: Request) -> LifeSystemService | None:
+        if _is_authenticated(request):
+            return _build_user_service(conn, active_username)
+        share_user_id = _get_share_session_user_id(request, scope="anki_review")
+        if share_user_id is None:
+            return None
+        return _build_user_service_by_id(conn, share_user_id)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -118,6 +170,22 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "partials/_quick_journal_panel.html",
             {"request": request, "active_user": active_username, "flash": "checkin saved"},
         )
+
+    @app.get("/journal", response_class=HTMLResponse)
+    def journal_page(
+        request: Request,
+        limit: int = Query(50, ge=1, le=500),
+        view: str = Query("cards"),
+    ) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        view_mode = "timeline" if view == "timeline" else "cards"
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            rows = service.list_journal(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update({"rows": rows, "limit": limit, "view_mode": view_mode})
+        return templates.TemplateResponse(request, "journal.html", ctx)
 
     @app.get("/inbox", response_class=HTMLResponse)
     def inbox_page(request: Request) -> HTMLResponse:
@@ -226,10 +294,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         snooze_until = (form.get("snooze_until") or "").strip()
-        if not _is_iso_aware(snooze_until):
-            return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": [], "flash": "invalid ISO datetime"}, status_code=400)
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
+            if not _is_iso_aware(snooze_until):
+                tasks = service.list_tasks(limit=200)
+                return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": "invalid ISO datetime"}, status_code=400)
             ok = service.snooze_task(task_id, snooze_until)
             flash = f"task snoozed: {task_id}" if ok else f"task not found: {task_id}"
             tasks = service.list_tasks(limit=200)
@@ -272,13 +341,378 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         remind_at = (form.get("remind_at") or "").strip()
-        if not _is_iso_aware(remind_at):
-            return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": [], "flash": "invalid ISO datetime"}, status_code=400)
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
+            if not _is_iso_aware(remind_at):
+                reminders = service.list_reminders(limit=200)
+                return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": "invalid ISO datetime"}, status_code=400)
             status = service.snooze_reminder(reminder_id, remind_at)
             reminders = service.list_reminders(limit=200)
         return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": f"snooze: {status}"})
+
+    @app.get("/anki", response_class=HTMLResponse)
+    def anki_page(
+        request: Request,
+        limit: int = Query(100, ge=1, le=500),
+        due_limit: int = Query(50, ge=1, le=500),
+        deck: str | None = Query(None),
+        draft_select: str | None = Query(None),
+        due_select: str | None = Query(None),
+    ) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        deck_filter = _none_if_blank(deck)
+        draft_select_all = (draft_select == "all")
+        due_select_all = (due_select == "all")
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            drafts = service.list_anki_drafts(limit=limit, deck_name=deck_filter)
+            due_cards = service.list_due_anki_cards(limit=due_limit)
+            deck_options = service.list_anki_decks()
+        ctx = _base_ctx(request)
+        ctx.update(
+            {
+                "drafts": drafts,
+                "due_cards": due_cards,
+                "flash": None,
+                "import_errors": [],
+                "import_json": "",
+                "limit": limit,
+                "due_limit": due_limit,
+                "deck_filter": deck_filter,
+                "deck_options": deck_options,
+                "draft_select_all": draft_select_all,
+                "due_select_all": due_select_all,
+            }
+        )
+        return templates.TemplateResponse(request, "anki.html", ctx)
+
+    def _anki_panel_response(
+        request: Request,
+        service: LifeSystemService,
+        *,
+        flash: str,
+        import_errors: list[dict[str, Any]] | None = None,
+        import_json: str = "",
+        deck_filter: str | None = None,
+        limit: int = 100,
+        due_limit: int = 50,
+        draft_select_all: bool = False,
+        due_select_all: bool = False,
+    ) -> HTMLResponse:
+        drafts = service.list_anki_drafts(limit=limit, deck_name=deck_filter)
+        due_cards = service.list_due_anki_cards(limit=due_limit)
+        deck_options = service.list_anki_decks()
+        return templates.TemplateResponse(
+            request,
+            "partials/_anki_panel.html",
+            {
+                "request": request,
+                "active_user": active_username,
+                "drafts": drafts,
+                "due_cards": due_cards,
+                "flash": flash,
+                "import_errors": import_errors or [],
+                "import_json": import_json,
+                "deck_filter": deck_filter,
+                "deck_options": deck_options,
+                "limit": limit,
+                "due_limit": due_limit,
+                "draft_select_all": draft_select_all,
+                "due_select_all": due_select_all,
+            },
+        )
+
+    @app.post("/anki/{draft_id}/update", response_class=HTMLResponse)
+    async def anki_update(request: Request, draft_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        front = _none_if_blank(form.get("front"))
+        back = _none_if_blank(form.get("back"))
+        tags = _none_if_blank(form.get("tags"))
+        deck = _none_if_blank(form.get("deck_name"))
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            status = service.update_anki_draft(draft_id, front=front, back=back, tags=tags, deck_name=deck)
+            return _anki_panel_response(request, service, flash=f"update: {status}")
+
+    @app.post("/anki/{draft_id}/archive", response_class=HTMLResponse)
+    def anki_archive(request: Request, draft_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            status = service.archive_anki_draft(draft_id)
+            return _anki_panel_response(request, service, flash=f"archive: {status}")
+
+    @app.post("/anki/import-json", response_class=HTMLResponse)
+    async def anki_import_json(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        raw_json = (form.get("raw_json") or "").strip()
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            result = service.import_anki_json(raw_json)
+            if result["ok"]:
+                return _anki_panel_response(request, service, flash=f"import success: {result['created']}")
+            return _anki_panel_response(
+                request,
+                service,
+                flash=f"import failed: {len(result['errors'])}",
+                import_errors=result["errors"],
+                import_json=raw_json,
+            )
+
+    @app.post("/anki/batch-activate", response_class=HTMLResponse)
+    @app.post("/anki/activate", response_class=HTMLResponse)
+    async def anki_batch_activate(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        body = await request.body()
+        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        deck_filter = _none_if_blank((parsed.get("deck_filter") or [""])[0])
+        try:
+            limit = int((parsed.get("limit") or ["100"])[0] or "100")
+        except ValueError:
+            limit = 100
+        try:
+            due_limit = int((parsed.get("due_limit") or ["50"])[0] or "50")
+        except ValueError:
+            due_limit = 50
+        draft_select_all = (parsed.get("draft_select_mode") or [""])[0] == "all"
+        due_select_all = (parsed.get("due_select_mode") or [""])[0] == "all"
+        draft_ids: list[int] = []
+        for raw in parsed.get("draft_id", []):
+            token = raw.strip()
+            if not token:
+                continue
+            try:
+                draft_ids.append(int(token))
+            except ValueError:
+                continue
+
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            if not draft_ids:
+                return _anki_panel_response(
+                    request,
+                    service,
+                    flash="batch activate: no draft selected",
+                    deck_filter=deck_filter,
+                    limit=limit,
+                    due_limit=due_limit,
+                    draft_select_all=draft_select_all,
+                    due_select_all=due_select_all,
+                )
+            result = service.activate_anki_drafts(draft_ids=draft_ids)
+            return _anki_panel_response(
+                request,
+                service,
+                flash=(
+                    f"batch activate: activated={result['activated_count']} deduped={result['deduped_count']} "
+                    f"skipped={result['skipped_count']} failed={result['failed_count']}"
+                ),
+                deck_filter=deck_filter,
+                limit=limit,
+                due_limit=due_limit,
+                draft_select_all=draft_select_all,
+                due_select_all=due_select_all,
+            )
+
+    @app.post("/anki/batch-review", response_class=HTMLResponse)
+    async def anki_batch_review(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        body = await request.body()
+        parsed = parse_qs(body.decode("utf-8"), keep_blank_values=True)
+        deck_filter = _none_if_blank((parsed.get("deck_filter") or [""])[0])
+        try:
+            limit = int((parsed.get("limit") or ["100"])[0] or "100")
+        except ValueError:
+            limit = 100
+        try:
+            due_limit = int((parsed.get("due_limit") or ["50"])[0] or "50")
+        except ValueError:
+            due_limit = 50
+        draft_select_all = (parsed.get("draft_select_mode") or [""])[0] == "all"
+        due_select_all = (parsed.get("due_select_mode") or [""])[0] == "all"
+        rating = ((parsed.get("rating") or ["good"])[0] or "good").strip().lower()
+        card_ids: list[int] = []
+        for raw in parsed.get("card_id", []):
+            token = raw.strip()
+            if not token:
+                continue
+            try:
+                card_ids.append(int(token))
+            except ValueError:
+                continue
+
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            if not card_ids:
+                return _anki_panel_response(
+                    request,
+                    service,
+                    flash="batch review: no due card selected",
+                    deck_filter=deck_filter,
+                    limit=limit,
+                    due_limit=due_limit,
+                    draft_select_all=draft_select_all,
+                    due_select_all=due_select_all,
+                )
+            result = service.review_anki_cards(card_ids=card_ids, rating=rating)
+            return _anki_panel_response(
+                request,
+                service,
+                flash=(
+                    f"batch review: reviewed={result['reviewed_count']} "
+                    f"skipped={result['skipped_count']} failed={result['failed_count']}"
+                ),
+                deck_filter=deck_filter,
+                limit=limit,
+                due_limit=due_limit,
+                draft_select_all=draft_select_all,
+                due_select_all=due_select_all,
+            )
+
+
+    @app.get("/share/anki-review", response_class=HTMLResponse)
+    def share_anki_review_entry(request: Request, t: str = Query("")) -> HTMLResponse:
+        token = t.strip()
+        if not token:
+            return HTMLResponse("invalid or expired share token", status_code=400)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            result = service.consume_anki_review_share_token(token=token)
+        if not bool(result.get("ok")):
+            return HTMLResponse("invalid or expired share token", status_code=400)
+        request.session[SHARE_SESSION_SCOPE_KEY] = "anki_review"
+        request.session[SHARE_SESSION_USER_ID_KEY] = int(result["user_id"])
+        request.session[SHARE_SESSION_UNTIL_KEY] = _to_iso(datetime.now(timezone.utc) + timedelta(minutes=120))
+        return RedirectResponse(url="/anki/review", status_code=303)
+
+    @app.get("/anki/review", response_class=HTMLResponse)
+    def anki_review_page(
+        request: Request,
+        deck_name: str | None = Query(None),
+        limit: int = Query(50, ge=1, le=200),
+    ) -> HTMLResponse:
+        deck_filter = _none_if_blank(deck_name)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_anki_review_service(conn, request)
+            if service is None:
+                return RedirectResponse(url="/login", status_code=302)
+            due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
+            deck_options = service.list_anki_decks()
+        card = due_cards[0] if due_cards else None
+        ctx = _base_ctx(request)
+        ctx.update(
+            {
+                "active_user": service.username,
+                "card": card,
+                "due_count": len(due_cards),
+                "total_due": len(due_cards),
+                "revealed": False,
+                "flash": None,
+                "deck_filter": deck_filter,
+                "deck_options": deck_options,
+                "limit": limit,
+                "session_done": False,
+            }
+        )
+        return templates.TemplateResponse(request, "anki_review.html", ctx)
+
+    @app.post("/anki/review/reveal", response_class=HTMLResponse)
+    async def anki_review_reveal(request: Request) -> HTMLResponse:
+        form = await _parse_urlencoded_body(request)
+        deck_filter = _none_if_blank(form.get("deck_name"))
+        try:
+            limit = int(form.get("limit") or "50")
+        except ValueError:
+            limit = 50
+        with connection_ctx(current_db_path) as conn:
+            service = _build_anki_review_service(conn, request)
+            if service is None:
+                return RedirectResponse(url="/login", status_code=302)
+            due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
+        card = due_cards[0] if due_cards else None
+        return templates.TemplateResponse(
+            request,
+            "partials/_anki_review_session_panel.html",
+            {
+                "request": request,
+                "active_user": service.username,
+                "card": card,
+                "due_count": len(due_cards),
+                "total_due": len(due_cards),
+                "revealed": True,
+                "flash": None,
+                "deck_filter": deck_filter,
+                "limit": limit,
+                "session_done": card is None,
+            },
+        )
+
+    @app.post("/anki/review/rate", response_class=HTMLResponse)
+    async def anki_review_rate(request: Request) -> HTMLResponse:
+        form = await _parse_urlencoded_body(request)
+        rating = (form.get("rate") or "").strip().lower()
+        deck_filter = _none_if_blank(form.get("deck_name"))
+        try:
+            limit = int(form.get("limit") or "50")
+        except ValueError:
+            limit = 50
+        try:
+            card_id = int(form.get("card_id") or "0")
+        except ValueError:
+            card_id = 0
+
+        flash = None
+        with connection_ctx(current_db_path) as conn:
+            service = _build_anki_review_service(conn, request)
+            if service is None:
+                return RedirectResponse(url="/login", status_code=302)
+            if card_id <= 0:
+                flash = "invalid card id"
+            else:
+                try:
+                    updated = service.review_anki_card(card_id=card_id, rating=rating)
+                except ValueError:
+                    updated = None
+                    flash = "invalid rating"
+                if updated is None and flash is None:
+                    flash = "anki card not found"
+            due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
+        card = due_cards[0] if due_cards else None
+        return templates.TemplateResponse(
+            request,
+            "partials/_anki_review_session_panel.html",
+            {
+                "request": request,
+                "active_user": service.username,
+                "card": card,
+                "due_count": len(due_cards),
+                "total_due": len(due_cards),
+                "revealed": False,
+                "flash": flash or f"rated: {rating}",
+                "deck_filter": deck_filter,
+                "limit": limit,
+                "session_done": card is None,
+            },
+        )
+
+    @app.get("/anki/stats", response_class=HTMLResponse)
+    def anki_stats_page(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            stats = service.build_anki_stats()
+        ctx = _base_ctx(request)
+        ctx.update({"stats": stats})
+        return templates.TemplateResponse(request, "anki_stats.html", ctx)
 
     return app
 
@@ -319,6 +753,14 @@ def _build_user_service(conn: Any, username: str) -> LifeSystemService:
     return LifeSystemService(conn=conn, user_id=int(user["id"]), username=str(user["username"]), telegram_chat_id=user.get("telegram_chat_id"), reminder_sender=None)
 
 
+
+def _build_user_service_by_id(conn: Any, user_id: int) -> LifeSystemService:
+    user_repo = UserRepository(conn)
+    user = user_repo.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"user not found: {user_id}")
+    return LifeSystemService(conn=conn, user_id=int(user["id"]), username=str(user["username"]), telegram_chat_id=user.get("telegram_chat_id"), reminder_sender=None)
+
 def _fmt_bj_time(value: str | None) -> str:
     if not value:
         return "-"
@@ -342,6 +784,23 @@ def _is_authenticated(request: Request) -> bool:
         return False
 
 
+
+def _get_share_session_user_id(request: Request, scope: str) -> int | None:
+    session = request.session
+    if session.get(SHARE_SESSION_SCOPE_KEY) != scope:
+        return None
+    until = session.get(SHARE_SESSION_UNTIL_KEY)
+    user_id = session.get(SHARE_SESSION_USER_ID_KEY)
+    if not until or user_id is None:
+        return None
+    try:
+        until_dt = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+        if until_dt <= datetime.now(timezone.utc):
+            return None
+        return int(user_id)
+    except (ValueError, TypeError):
+        return None
+
 def _to_iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()
 
@@ -352,3 +811,16 @@ def _is_iso_aware(value: str) -> bool:
     except ValueError:
         return False
     return dt.tzinfo is not None
+
+
+def _none_if_blank(value: str | None) -> str | None:
+    if value is None:
+        return None
+    out = value.strip()
+    return out if out else None
+
+
+
+
+
+

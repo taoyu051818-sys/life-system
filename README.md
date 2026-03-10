@@ -72,6 +72,10 @@ python -m life_system.main journal today
 # Summary
 python -m life_system.main summary today
 python -m life_system.main summary day --date 2026-03-07
+python -m life_system.main summary week --date 2026-03-10
+python -m life_system.main summary month --date 2026-03-10
+python -m life_system.main summary quarter --date 2026-03-10
+python -m life_system.main summary year --date 2026-03-10
 
 # User Telegram
 python -m life_system.main user set-telegram xiaoyu 123456789
@@ -112,7 +116,7 @@ python -m life_system.main user clear-telegram xiaoyu
 
 ## Summary Output
 
-- `summary today` / `summary day` output is Chinese by default.
+- `summary today` / `summary day` / `summary week` / `summary month` / `summary quarter` / `summary year` output is Chinese by default.
 - Summary day boundaries are hardcoded to Asia/Shanghai (鍖椾含鏃堕棿).
 - Summary timestamps in highlights are displayed in Beijing time.
 - Summary is evidence-first and user-scoped.
@@ -361,7 +365,7 @@ Optional env:
 Available pages:
 - `GET /`
 - `GET /health`
-- `GET /inbox?user=xiaoyu`
+- `GET /inbox`
 
 Inbox actions (htmx partial refresh):
 - `POST /inbox/{id}/to-task`
@@ -377,7 +381,7 @@ Environment variables:
 - `LIFE_SYSTEM_DB` (optional, default `data/life_system.db`)
 
 Behavior:
-- Unauthenticated access to `/` and `/inbox` redirects to `/login`.
+- Unauthenticated access to `/`, `/inbox`, `/tasks`, `/reminders`, `/journal`, `/anki` redirects to `/login`.
 - Login is password-only with optional "remember this device".
 - Session cookie is used (thin web auth only, not a public internet auth system).
 - Inbox page adds `keep` action (`POST /inbox/{id}/keep`) with Telegram-consistent semantics:
@@ -403,3 +407,109 @@ Reminders page:
 - actions reuse `LifeSystemService` reminder methods
 
 All displayed times remain Beijing time via shared `bj_time` filter.
+
+## Web Journal + Anki (Phase 4)
+
+New pages:
+- GET /journal?limit=50`r
+- GET /anki?limit=100`r
+
+Journal page:
+- list fields: created_at / entry_type / content / energy / focus / mood / related_task_id / related_inbox_id / tags
+- default reverse chronological order (latest first)
+
+Anki page:
+- list fields: id / front / back / tags / deck / status / created_at / source
+- actions: update / archive
+
+Anki JSON import:
+- action: POST /anki/import-json`r
+- supports either a single object or an array
+- required fields: ront, ack`r
+- optional fields: 	ags (string or string array), deck (default default)
+- import policy: all-or-nothing (any validation error rejects the whole batch)
+
+
+## Anki Review (SM-2 MVP)
+
+New tables:
+- nki_cards`r
+- nki_review_events`r
+
+CLI:
+- python -m life_system.main anki review-due --limit 20`r
+- python -m life_system.main anki review 1 --rate good`r
+
+Web:
+- GET /anki/review shows next due card
+- rating buttons: gain / hard / good / easy`r
+
+
+
+## Web Anki Batch Operations
+
+On `/anki` page:
+- Drafts panel supports deck filter + checkbox selection + batch activate (`/anki/batch-activate`)
+- Due Cards panel supports checkbox selection + batch review (`/anki/batch-review`)
+- Batch activate/review both return summary counts in flash message
+
+CLI remains available:
+- `python -m life_system.main anki activate 1 2 3`
+- `python -m life_system.main anki review-due --limit 20`
+- `python -m life_system.main anki review 1 --rate good`
+
+
+## Web Anki Review & Stats
+
+- `GET /anki/review`: one-card-at-a-time review session
+  - optional filter: `?deck_name=default`
+  - reveal answer: `POST /anki/review/reveal`
+  - rate card: `POST /anki/review/rate` with `again|hard|good|easy`
+- `GET /anki/stats`: lightweight dashboard
+  - summary: draft total, non-archived drafts, active cards, due now
+  - recent 7 days: drafts created, cards activated, review count
+  - rating distribution: again/hard/good/easy
+  - deck breakdown: draft and due pressure by deck
+
+## Encouragement (DeepSeek + Telegram)
+
+Environment variables:
+- `DEEPSEEK_API_KEY` (preferred) or `APIKEY`
+- `DEEPSEEK_BASE_URL` (optional, default: `https://api.deepseek.com`)
+- `DEEPSEEK_MODEL` (optional, default: `deepseek-chat`)
+
+CLI:
+- `python -m life_system.main --user xiaoyu encouragement today`
+- `python -m life_system.main --user xiaoyu encouragement send`
+- `python -m life_system.main encouragement send-daily`
+
+Telegram:
+- New command: `/encouragement`
+- `telegram setup-menu` now includes `/encouragement`
+
+Systemd automation at 20:30 (Asia/Shanghai):
+- script: `/opt/life-system/scripts/run_encouragement.sh`
+- unit: `deploy/systemd/life-encouragement.service`
+- timer: `deploy/systemd/life-encouragement.timer`
+
+Install/update:
+```bash
+sudo chmod +x /opt/life-system/scripts/run_encouragement.sh
+sudo cp /opt/life-system/deploy/systemd/life-encouragement.service /etc/systemd/system/
+sudo cp /opt/life-system/deploy/systemd/life-encouragement.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now life-encouragement.timer
+sudo systemctl status life-encouragement.timer
+```
+
+
+
+
+## Web Anki Share Review Link
+
+- Service API:
+  - `create_anki_review_share_link(base_url, ttl_minutes=120, max_uses=1)`
+  - `consume_anki_review_share_token(token)`
+- Share entry route: `GET /share/anki-review?t=...`
+- On successful token validation, web session grants `/anki/review` access for 120 minutes.
+- Share session does not unlock other pages (for example `/tasks`, `/inbox`).

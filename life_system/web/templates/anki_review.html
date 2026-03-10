@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Anki Review | Life System{% endblock %}
+{% block content %}
+<section class="card review-page">
+  <div class="review-header">
+    <h1>Anki Review</h1>
+    <a class="btn small ghost" href="/anki">Back to /anki</a>
+  </div>
+  <form class="row-form" method="get" action="/anki/review">
+    <label for="deck_name">deck</label>
+    <select id="deck_name" name="deck_name">
+      <option value="">all</option>
+      {% for dname in deck_options %}
+      <option value="{{ dname }}" {% if deck_filter == dname %}selected{% endif %}>{{ dname }}</option>
+      {% endfor %}
+    </select>
+    <input type="hidden" name="limit" value="{{ limit or 50 }}" />
+    <button class="btn small secondary" type="submit">Apply</button>
+  </form>
+  {% include "partials/_anki_review_session_panel.html" %}
+</section>
+{% endblock %}

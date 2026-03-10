@@ -1,0 +1,25 @@
+﻿<div id="anki-review-panel">
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  <p class="muted">due cards: {{ due_count }}</p>
+
+  {% if card %}
+  <article class="card nested">
+    <div class="pill">#{{ card.id }} | {{ card.state }}</div>
+    <h3>{{ card.front }}</h3>
+    <details>
+      <summary>show answer</summary>
+      <p>{{ card.back }}</p>
+    </details>
+    <p class="muted">deck={{ card.deck }} | tags={{ card.tags or '-' }} | due={{ card.due_at | bj_time }}</p>
+
+    <div class="focus-bar">
+      <button class="btn small ghost" hx-post="/anki/review/{{ card.id }}" hx-vals='{"rate":"again"}' hx-target="#anki-review-panel" hx-swap="outerHTML">again</button>
+      <button class="btn small ghost" hx-post="/anki/review/{{ card.id }}" hx-vals='{"rate":"hard"}' hx-target="#anki-review-panel" hx-swap="outerHTML">hard</button>
+      <button class="btn small secondary" hx-post="/anki/review/{{ card.id }}" hx-vals='{"rate":"good"}' hx-target="#anki-review-panel" hx-swap="outerHTML">good</button>
+      <button class="btn small" hx-post="/anki/review/{{ card.id }}" hx-vals='{"rate":"easy"}' hx-target="#anki-review-panel" hx-swap="outerHTML">easy</button>
+    </div>
+  </article>
+  {% else %}
+  <div class="muted">no due cards</div>
+  {% endif %}
+</div>

@@ -1,0 +1,10 @@
+﻿[Unit]
+Description=Life System daily encouragement sender
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/life-system
+EnvironmentFile=/etc/life-system/life-system.env
+ExecStart=/opt/life-system/scripts/run_encouragement.sh

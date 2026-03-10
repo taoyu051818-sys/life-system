@@ -1,13 +1,14 @@
-import argparse
+﻿import argparse
 import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
-from life_system.app.services import InboxReviewService, LifeSystemService
+from life_system.app.services import LifeSystemService, TelegramInboxReviewService
 from life_system.app.telegram_polling import TelegramPollingService
 from life_system.infra.db import connection_ctx, ensure_database, now_utc_iso, resolve_db_path
+from life_system.infra.deepseek_client import DeepSeekClient
 from life_system.infra.repositories import UserRepository
 from life_system.infra.telegram_sender import TelegramReminderSender
 
@@ -127,6 +128,16 @@ def build_parser() -> argparse.ArgumentParser:
     anki_list = anki_sub.add_parser("list")
     anki_list.add_argument("--status", default=None)
     anki_list.add_argument("--limit", type=int, default=50)
+    anki_review_due = anki_sub.add_parser("review-due", help="List due Anki cards")
+    anki_review_due.add_argument("--limit", type=int, default=20)
+    anki_review_due.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    anki_review = anki_sub.add_parser("review", help="Review one Anki card")
+    anki_review.add_argument("card_id", type=int)
+    anki_review.add_argument("--rate", required=True, choices=["again", "hard", "good", "easy"])
+    anki_review.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    anki_activate = anki_sub.add_parser("activate", help="Activate draft ids into review cards")
+    anki_activate.add_argument("draft_ids", nargs="+", type=int)
+    anki_activate.add_argument("--now", default=None, help="ISO timestamp, default utc now")
     anki_update = anki_sub.add_parser("update")
     anki_update.add_argument("draft_id", type=int)
     anki_update.add_argument("--front", default=None)
@@ -158,11 +169,27 @@ def build_parser() -> argparse.ArgumentParser:
     journal_today.add_argument("--limit", type=int, default=50)
     journal_today.add_argument("--type", dest="entry_type", default=None, choices=sorted(VALID_JOURNAL_TYPES))
 
-    summary = subparsers.add_parser("summary", help="Daily evidence-first summary")
+    summary = subparsers.add_parser("summary", help="Evidence-first summary")
     summary_sub = summary.add_subparsers(dest="action", required=True)
     summary_sub.add_parser("today", help="Show today's summary")
     summary_day = summary_sub.add_parser("day", help="Show summary for a specific day")
     summary_day.add_argument("--date", required=True, help="YYYY-MM-DD")
+    summary_week = summary_sub.add_parser("week", help="Show summary for the week containing --date")
+    summary_week.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    summary_month = summary_sub.add_parser("month", help="Show summary for the month containing --date")
+    summary_month.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    summary_quarter = summary_sub.add_parser("quarter", help="Show summary for the quarter containing --date")
+    summary_quarter.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    summary_year = summary_sub.add_parser("year", help="Show summary for the year containing --date")
+    summary_year.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    encouragement = subparsers.add_parser("encouragement", help="Generate/send daily encouragement")
+    encouragement_sub = encouragement.add_subparsers(dest="action", required=True)
+    encouragement_today = encouragement_sub.add_parser("today", help="Preview today's encouragement")
+    encouragement_today.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    encouragement_send = encouragement_sub.add_parser("send", help="Send encouragement for current --user")
+    encouragement_send.add_argument("--now", default=None, help="ISO timestamp, default utc now")
+    encouragement_daily = encouragement_sub.add_parser("send-daily", help="Send encouragement for all users")
+    encouragement_daily.add_argument("--now", default=None, help="ISO timestamp, default utc now")
 
     telegram = subparsers.add_parser("telegram", help="Telegram polling utilities")
     telegram_sub = telegram.add_subparsers(dest="action", required=True)
@@ -194,7 +221,7 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
             return _dispatch_user(user_repo, args)
         if args.entity == "inbox" and args.action in {"review-due", "review-send"}:
             sender = _build_telegram_sender_from_env()
-            review_service = InboxReviewService(conn, telegram_sender=sender)
+            review_service = TelegramInboxReviewService(conn, telegram_sender=sender)
             if args.action == "review-due":
                 stats = review_service.review_due(now=args.now)
             else:
@@ -210,10 +237,67 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                 f"failed={stats['failed']}"
             )
             return 0
+        if args.entity == "encouragement":
+            deepseek_client = _build_deepseek_client_from_env()
+            sender = _build_telegram_sender_from_env()
+            if args.action == "send-daily":
+                sent = 0
+                fallback_cli = 0
+                failed = 0
+                for row in user_repo.list_all():
+                    service = LifeSystemService(
+                        conn,
+                        user_id=row["id"],
+                        username=row["username"],
+                        telegram_chat_id=row.get("telegram_chat_id"),
+                        reminder_sender=sender,
+                    )
+                    try:
+                        result = service.send_today_encouragement(now=args.now, deepseek_client=deepseek_client)
+                    except Exception:
+                        failed += 1
+                        continue
+                    if result.get("status") == "sent":
+                        sent += 1
+                    else:
+                        fallback_cli += 1
+                print(
+                    "encouragement daily: "
+                    f"sent={sent}, fallback_cli={fallback_cli}, failed={failed}"
+                )
+                return 0
+
+            user = user_repo.get_by_username(args.user)
+            if user is None:
+                print(f"user not found: {args.user}")
+                return 1
+            service = LifeSystemService(
+                conn,
+                user_id=user["id"],
+                username=user["username"],
+                telegram_chat_id=user.get("telegram_chat_id"),
+                reminder_sender=sender,
+            )
+            if args.action == "today":
+                result = service.build_today_encouragement(now=args.now, deepseek_client=deepseek_client)
+                print(result["text"])
+                return 0
+            if args.action == "send":
+                try:
+                    result = service.send_today_encouragement(now=args.now, deepseek_client=deepseek_client)
+                except Exception as exc:
+                    print(f"encouragement send failed: {exc}")
+                    return 1
+                if result.get("status") == "sent":
+                    print("encouragement sent: channel=telegram")
+                else:
+                    print("encouragement generated: channel=cli")
+                    print(result["text"])
+                return 0
         if args.entity == "telegram":
             sender = _build_telegram_sender_from_env()
             if sender is None:
-                print("TELEGRAM_BOT_TOKEN 未设置，无法执行 telegram 命令")
+                print("TELEGRAM_BOT_TOKEN 鏈缃紝鏃犳硶鎵ц telegram 鍛戒护")
                 return 1
             if args.action == "setup-menu":
                 try:
@@ -222,9 +306,9 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                     print(f"telegram setup-menu failed: {exc}")
                     return 1
                 if result.get("menu_button", True):
-                    print("telegram 菜单已设置：/r /w /c /ir /help")
+                    print("telegram 鑿滃崟宸茶缃細/r /w /c /ir /encouragement /help")
                 else:
-                    print("telegram 命令菜单已设置；菜单按钮未设置成功")
+                    print("telegram command menu set; menu button setup failed")
                 return 0
             if args.action == "setup-keyboard":
                 pushed = 0
@@ -305,7 +389,7 @@ def _dispatch_user(user_repo: UserRepository, args: argparse.Namespace) -> int:
     if args.action == "list":
         rows = user_repo.list_all()
         for row in rows:
-            tg = "已配置" if row.get("telegram_chat_id") else "未配置"
+            tg = "configured" if row.get("telegram_chat_id") else "not_configured"
             print(f"{row['id']}\t{row['username']}\t{row['display_name']}\tTelegram:{tg}")
         return 0
 
@@ -342,6 +426,16 @@ def _build_telegram_sender_from_env() -> TelegramReminderSender | None:
         return None
     return TelegramReminderSender(token)
 
+
+def _build_deepseek_client_from_env() -> DeepSeekClient | None:
+    api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("APIKEY")
+    if not api_key:
+        return None
+    return DeepSeekClient(
+        api_key=api_key,
+        base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
+        model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+    )
 
 def _validate_iso8601(value: str, field_name: str) -> bool:
     if not ISO_8601_PATTERN.match(value):
@@ -409,6 +503,7 @@ def _format_history_payload(payload: str | None) -> str:
 
 
 def _print_summary(summary: dict[str, object]) -> None:
+    summary_title = str(summary.get("summary_title") or "每日总结")
     day = summary["day"]
     overview = summary["overview"]
     grouped = summary["journal_grouped"]
@@ -416,15 +511,13 @@ def _print_summary(summary: dict[str, object]) -> None:
     loops = summary["open_loops"]
     note = summary["note"]
 
-    print(f"== 每日总结 | {day} ==")
+    print(f"== {summary_title} | {day} ==")
     print("【今日概览】")
     print(
-        "收件箱: 新增={inbox_captured}, 已分拣={inbox_triaged}, 已归档={inbox_archived}".format(**overview)
+        "收件箱: 新增={inbox_captured}, 已分流={inbox_triaged}, 已归档={inbox_archived}".format(**overview)
     )
     print(
-        "任务: 新建={tasks_created}, 完成={tasks_done}, 延后={tasks_snoozed}, 放弃={tasks_abandoned}".format(
-            **overview
-        )
+        "任务: 新建={tasks_created}, 完成={tasks_done}, 延后={tasks_snoozed}, 放弃={tasks_abandoned}".format(**overview)
     )
     print(
         "提醒: 首次发送={reminders_sent}, 重试={reminders_retried}, 已确认={reminders_acknowledged}, 已跳过={reminders_skipped}, 已过期={reminders_expired}".format(
@@ -437,55 +530,42 @@ def _print_summary(summary: dict[str, object]) -> None:
 
     print("【日志亮点】")
     has_journal = False
-    type_labels = {
+    label_map = {
         "activity": "活动",
         "reflection": "反思",
         "win": "小胜利",
         "checkin": "状态记录",
     }
-    rows_all: list[dict[str, object]] = []
-    for et in ("activity", "reflection", "win", "checkin"):
-        for row in grouped.get(et, []):
-            copied = dict(row)
-            copied["_et"] = et
-            rows_all.append(copied)
-    rows_all.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
-    rows_all = rows_all[:3]
-    if rows_all:
-        has_journal = True
-        for row in rows_all:
-            et = str(row.get("_et"))
-            label = type_labels.get(et, et)
-            ts = _to_cst_display(str(row["created_at"]))
-            print(f"- {label} [{row['id']}] {ts} | {row['content']}")
+    for key in ["activity", "reflection", "win", "checkin"]:
+        rows = grouped.get(key, []) if isinstance(grouped, dict) else []
+        for row in rows[:3]:
+            has_journal = True
+            created_at = _fmt_reminder_time(str(row.get("created_at") or ""))
+            print(f"- {label_map.get(key, key)} | {created_at} | {row.get('content', '')}")
     if not has_journal:
-        print("- 今天暂无日志记录")
+        print("- 今日暂无日志记录")
     print("")
 
     print("【状态快照】")
-    if state["avg_energy"] is None and state["avg_focus"] is None and state["avg_mood"] is None:
-        print("无状态数据")
+    avg_energy = state.get("avg_energy") if isinstance(state, dict) else None
+    avg_focus = state.get("avg_focus") if isinstance(state, dict) else None
+    avg_mood = state.get("avg_mood") if isinstance(state, dict) else None
+    if avg_energy is None and avg_focus is None and avg_mood is None:
+        print("- 无状态数据")
     else:
-        e = "-" if state["avg_energy"] is None else f"{float(state['avg_energy']):.2f}"
-        f = "-" if state["avg_focus"] is None else f"{float(state['avg_focus']):.2f}"
-        m = "-" if state["avg_mood"] is None else f"{float(state['avg_mood']):.2f}"
-        print(f"平均能量: {e} | 平均专注: {f} | 平均心情: {m}")
+        def _fmt_avg(v: object) -> str:
+            return "-" if v is None else f"{float(v):.1f}"
+        print(f"- 平均能量={_fmt_avg(avg_energy)}, 平均专注={_fmt_avg(avg_focus)}, 平均心情={_fmt_avg(avg_mood)}")
     print("")
 
     print("【未闭环事项】")
-    print(f"开放任务: {loops['open_tasks']}")
-    print(f"延后任务: {loops['snoozed_tasks']}")
-    print(f"待确认提醒: {loops['pending_ack']}")
+    print(
+        f"- 开放任务={loops.get('open_tasks', 0)}, 延后任务={loops.get('snoozed_tasks', 0)}, 待确认提醒={loops.get('pending_ack', 0)}"
+    )
     print("")
 
     print("【今日短注】")
     print(note)
-
-
-def _to_cst_display(iso_text: str) -> str:
-    dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
-    return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M")
-
 
 def _to_cst_display_with_seconds(iso_text: str) -> str:
     dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
@@ -722,7 +802,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         if args.send:
             result = service.send_due_reminders(now=args.now, limit=args.limit)
             if result["error"] == "missing_telegram_token":
-                print("TELEGRAM_BOT_TOKEN 未设置，无法发送 Telegram 提醒")
+                print("TELEGRAM_BOT_TOKEN 鏈缃紝鏃犳硶鍙戦€?Telegram 鎻愰啋")
                 return 1
             items = result["items"]
         else:
@@ -811,11 +891,49 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         print(f"anki draft created: id={draft_id}")
         return 0
 
+    if entity == "anki" and action == "activate":
+        result = service.activate_anki_drafts(draft_ids=[int(x) for x in args.draft_ids], now=args.now)
+        print(
+            "anki activate: "
+            f"created_count={result['created_count']} "
+            f"skipped_duplicate_count={result['skipped_duplicate_count']}"
+        )
+        if result["created_card_ids"]:
+            print("created_card_ids=" + ",".join(str(i) for i in result["created_card_ids"]))
+        for item in result["skipped"]:
+            if item.get("reason") == "duplicate":
+                print(
+                    f"skipped draft_id={item['draft_id']} reason=duplicate existing_card_id={item.get('existing_card_id')}"
+                )
+            else:
+                print(f"skipped draft_id={item['draft_id']} reason={item.get('reason')}")
+        return 0
+
+    if entity == "anki" and action == "review-due":
+        items = service.list_due_anki_cards(limit=args.limit, now=args.now)
+        for item in items:
+            print(
+                f"[{item['id']}] {item['state']} | due={item['due_at']} | interval={item.get('interval_days')} "
+                f"| ease={item.get('ease_factor')} | {item['front']}"
+            )
+        return 0
+
+    if entity == "anki" and action == "review":
+        updated = service.review_anki_card(card_id=args.card_id, rating=args.rate, now=args.now)
+        if updated is None:
+            print("anki card not found")
+            return 1
+        print(
+            f"anki card reviewed: id={updated['id']} rating={args.rate} "
+            f"state={updated['state']} due_at={updated['due_at']} interval={updated.get('interval_days')}"
+        )
+        return 0
+
     if entity == "anki" and action == "list":
         items = service.list_anki_drafts(status=args.status, limit=args.limit)
         for item in items:
             print(
-                f"[{item['id']}] 状态(status)={item['status']} | 牌组(deck)={item['deck_name']} | 来源(source)={item['source_type']}:{item['source_id']} | 导出时间(exported_at)={_fmt_optional(item.get('exported_at'))}"
+                f"[{item['id']}] 鐘舵€?status)={item['status']} | 鐗岀粍(deck)={item['deck_name']} | 鏉ユ簮(source)={item['source_type']}:{item['source_id']} | 瀵煎嚭鏃堕棿(exported_at)={_fmt_optional(item.get('exported_at'))}"
             )
         return 0
 
@@ -844,7 +962,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         if item is None:
             print("anki draft not found")
             return 1
-        print("== Anki 草稿详情 (draft detail) ==")
+        print("== Anki 鑽夌璇︽儏 (draft detail) ==")
         fields = [
             "id",
             "status",
@@ -931,6 +1049,47 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         _print_summary(summary)
         return 0
 
+    if entity == "summary" and action == "week":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_week_summary(args.date)
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "month":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_month_summary(args.date)
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "quarter":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_quarter_summary(args.date)
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "year":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_year_summary(args.date)
+        _print_summary(summary)
+        return 0
     parser = build_parser()
     parser.print_help()
     return 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+

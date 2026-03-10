@@ -1,0 +1,63 @@
+<section class="card nested">
+  <h3>Drafts</h3>
+  <form class="row-form" method="get" action="/anki">
+    <label for="deck">deck</label>
+    <select id="deck" name="deck">
+      <option value="">all</option>
+      {% for dname in deck_options %}
+      <option value="{{ dname }}" {% if deck_filter == dname %}selected{% endif %}>{{ dname }}</option>
+      {% endfor %}
+    </select>
+    <input type="hidden" name="limit" value="{{ limit or 100 }}" />
+    <input type="hidden" name="due_limit" value="{{ due_limit or 50 }}" />
+    <button class="btn small secondary" type="submit">Filter</button>
+    <a class="btn small ghost" href="/anki?limit={{ limit or 100 }}&due_limit={{ due_limit or 50 }}">Clear</a>
+    <a class="btn small ghost" href="/anki?limit={{ limit or 100 }}&due_limit={{ due_limit or 50 }}{% if deck_filter %}&deck={{ deck_filter }}{% endif %}&draft_select=all{% if due_select_all %}&due_select=all{% endif %}">全选</a>
+    <a class="btn small ghost" href="/anki?limit={{ limit or 100 }}&due_limit={{ due_limit or 50 }}{% if deck_filter %}&deck={{ deck_filter }}{% endif %}&draft_select=none{% if due_select_all %}&due_select=all{% endif %}">取消全选</a>
+  </form>
+
+  <form id="activate-form" class="row-form" hx-post="/anki/batch-activate" hx-target="#anki-panel" hx-swap="outerHTML">
+    <input type="hidden" name="deck_filter" value="{{ deck_filter or '' }}" />
+    <input type="hidden" name="limit" value="{{ limit or 100 }}" />
+    <input type="hidden" name="due_limit" value="{{ due_limit or 50 }}" />
+    <input type="hidden" name="draft_select_mode" value="{% if draft_select_all %}all{% else %}none{% endif %}" />
+    <input type="hidden" name="due_select_mode" value="{% if due_select_all %}all{% else %}none{% endif %}" />
+    <button class="btn" type="submit">批量激活选中 drafts</button>
+  </form>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>pick</th><th>id</th><th>created_at</th><th>deck_name</th><th>tags</th><th>source_type</th><th>status</th><th>front</th><th>actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in drafts %}
+        <tr>
+          <td><input type="checkbox" name="draft_id" value="{{ d.id }}" form="activate-form" {% if draft_select_all %}checked{% endif %}/></td>
+          <td>{{ d.id }}</td>
+          <td>{{ d.created_at | bj_time }}</td>
+          <td>{{ d.deck_name or '-' }}</td>
+          <td>{{ d.tags or '-' }}</td>
+          <td>{{ d.source_type }}</td>
+          <td>{{ d.status }}</td>
+          <td class="content">{{ d.front }}</td>
+          <td>
+            <form class="stack-form compact" hx-post="/anki/{{ d.id }}/update" hx-target="#anki-panel" hx-swap="outerHTML">
+              <input name="front" placeholder="front (optional)" />
+              <input name="back" placeholder="back (optional)" />
+              <input name="tags" placeholder="tags (optional)" />
+              <input name="deck_name" placeholder="deck (optional)" />
+              <button class="btn small secondary" type="submit">update</button>
+            </form>
+            <button class="btn small ghost" hx-post="/anki/{{ d.id }}/archive" hx-target="#anki-panel" hx-swap="outerHTML">archive</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="muted">no anki drafts</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

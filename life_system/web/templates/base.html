@@ -5,16 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Life System Web{% endblock %}</title>
     <link rel="stylesheet" href="/static/app.css" />
-    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <script src="/static/js/htmx.min.js"></script>
   </head>
   <body>
     <header class="topbar">
       <div class="brand">Life System</div>
       <nav class="nav">
-        <a href="/">首页</a>
-        <a href="/inbox">Inbox Review</a>
-        <a href="/tasks">Tasks</a>
-        <a href="/reminders">Reminders</a>
+        <a class="{% if active_page == 'home' %}active{% endif %}" href="/">首页</a>
+        <a class="{% if active_page == 'inbox' %}active{% endif %}" href="/inbox">Inbox Review</a>
+        <a class="{% if active_page == 'tasks' %}active{% endif %}" href="/tasks">Tasks</a>
+        <a class="{% if active_page == 'reminders' %}active{% endif %}" href="/reminders">Reminders</a>
+        <a class="{% if active_page == 'journal' %}active{% endif %}" href="/journal">Journal</a>
+        <a class="{% if active_page == 'anki' %}active{% endif %}" href="/anki">Anki</a>
+        <a class="{% if active_page == 'anki_review' %}active{% endif %}" href="/anki/review">Anki Review</a>
+        <a class="{% if active_page == 'anki_stats' %}active{% endif %}" href="/anki/stats">Anki Stats</a>
       </nav>
       <div class="user-chip">用户: {{ active_user }}</div>
       {% if logged_in %}

@@ -164,6 +164,7 @@ class TelegramReminderSender:
             {"command": "w", "description": "小胜利"},
             {"command": "c", "description": "状态签到"},
             {"command": "ir", "description": "收件箱回顾"},
+            {"command": "encouragement", "description": "今日鼓励"},
             {"command": "help", "description": "帮助"},
         ]
         self._post("setMyCommands", {"commands": json.dumps(commands, ensure_ascii=False)})
@@ -201,3 +202,5 @@ class TelegramReminderSender:
             desc = payload.get("description", "telegram_api_error")
             raise RuntimeError(f"telegram_api_error: {desc}")
         return payload
+
+
