@@ -68,6 +68,18 @@ class _LegacyLifeSystemService:
         rule_name: str | None = None,
         rule_version: str | None = None,
     ) -> int:
+        # delegated_to=InboxService.capture_inbox
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.capture_inbox(
+                content=content,
+                source=source,
+                source_journal_entry_id=source_journal_entry_id,
+                created_by=created_by,
+                rule_name=rule_name,
+                rule_version=rule_version,
+            )
         item_id = self.inbox_repo.create(
             user_id=self.user_id,
             content=content,
@@ -80,7 +92,6 @@ class _LegacyLifeSystemService:
         )
         self.event_logger.log("inbox_captured", {"inbox_item_id": item_id, "username": self.username})
         return item_id
-
     def list_inbox(
         self,
         status: str | None = None,
@@ -333,14 +344,23 @@ class _LegacyLifeSystemService:
         return stats
 
     def feedback_report(self, limit: int = 50) -> list[dict[str, Any]]:
+        # delegated_to=InboxService.feedback_report
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.feedback_report(limit=limit)
         return self.feedback_repo.list_recent(user_id=self.user_id, limit=limit)
-
     def pop_nonfatal_warnings(self) -> list[str]:
         out = self._nonfatal_warnings[:]
         self._nonfatal_warnings.clear()
         return out
 
     def inbox_triage_status(self, inbox_item_id: int) -> str:
+        # delegated_to=InboxService.inbox_triage_status
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.inbox_triage_status(inbox_item_id=inbox_item_id)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return "not_found"
@@ -349,7 +369,6 @@ class _LegacyLifeSystemService:
         if not self._is_inbox_triage_allowed(item):
             return "already_triaged"
         return "ok"
-
     def create_task(
         self,
         title: str,
@@ -504,6 +523,11 @@ class _LegacyLifeSystemService:
         result = self.send_due_reminders(now=now, limit=limit)
         return result["items"]
     def send_due_reminders(self, now: str | None = None, limit: int = 50) -> dict[str, Any]:
+        # delegated_to=ReminderService.send_due_reminders
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.send_due_reminders(now=now, limit=limit)
         pivot_iso = now or now_utc_iso()
         pivot_dt = self._parse_iso(pivot_iso)
         candidates = self.reminder_repo.list_due_candidates(user_id=self.user_id, limit=limit * 5)
@@ -531,8 +555,6 @@ class _LegacyLifeSystemService:
                 result.append(processed)
         self.event_logger.log("reminder_due_sent", {"now": pivot_iso, "count": len(result), "failed": failed})
         return {"error": None, "items": result, "processed": len(result), "failed": failed}
-
-
     def list_reminders(self, limit: int = 100) -> list[dict[str, Any]]:
         # delegated_to=ReminderService.list_reminders
         # fallback_reason=legacy_direct_instantiation_compat
@@ -1493,9 +1515,27 @@ class InboxService:
         self.inbox_repo = inbox_repo
         self.triage_event_repo = triage_event_repo
         self._legacy = legacy
-    def capture_inbox(self, *args: Any, **kwargs: Any) -> int:
-        return self._legacy.capture_inbox(*args, **kwargs)
-
+    def capture_inbox(
+        self,
+        content: str,
+        source: str = "cli",
+        source_journal_entry_id: int | None = None,
+        created_by: str | None = "manual",
+        rule_name: str | None = None,
+        rule_version: str | None = None,
+    ) -> int:
+        item_id = self.inbox_repo.create(
+            user_id=self.user_id,
+            content=content,
+            source=source,
+            created_at=now_utc_iso(),
+            source_journal_entry_id=source_journal_entry_id,
+            created_by=created_by,
+            rule_name=rule_name,
+            rule_version=rule_version,
+        )
+        self._legacy.event_logger.log("inbox_captured", {"inbox_item_id": item_id, "username": self._legacy.username})
+        return item_id
     def list_inbox(
         self,
         status: str | None = None,
@@ -1526,15 +1566,23 @@ class InboxService:
         return self.triage_event_repo.list_for_inbox(user_id=self.user_id, inbox_item_id=inbox_item_id)
     def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
+    def _is_inbox_triage_allowed(self, item: dict[str, Any]) -> bool:
+        return str(item.get("status") or "") == "new" and not item.get("triaged_at")
+
     def feedback_scan(self, *args: Any, **kwargs: Any) -> dict[str, int]:
         return self._legacy.feedback_scan(*args, **kwargs)
 
-    def feedback_report(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.feedback_report(*args, **kwargs)
-
-    def inbox_triage_status(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.inbox_triage_status(*args, **kwargs)
-
+    def feedback_report(self, limit: int = 50) -> list[dict[str, Any]]:
+        return self._legacy.feedback_repo.list_recent(user_id=self.user_id, limit=limit)
+    def inbox_triage_status(self, inbox_item_id: int) -> str:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "archived":
+            return "already_archived"
+        if not self._is_inbox_triage_allowed(item):
+            return "already_triaged"
+        return "ok"
     def pop_nonfatal_warnings(self) -> list[str]:
         return self._legacy.pop_nonfatal_warnings()
 
@@ -1650,7 +1698,9 @@ class ReminderService:
         self.reminder_event_repo = reminder_event_repo
         self.event_logger = event_logger
         self._legacy = legacy
-
+        self.username = legacy.username
+        self.telegram_chat_id = legacy.telegram_chat_id
+        self.reminder_sender = legacy.reminder_sender
     def create_reminder(self, task_id: int, remind_at: str, channel: str = "cli") -> int | None:
         task = self.task_service.get_task_for_reminder(task_id)
         if task is None:
@@ -1686,9 +1736,34 @@ class ReminderService:
 
         result = self.send_due_reminders(now=now, limit=limit)
         return result["items"]
-    def send_due_reminders(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return self._legacy.send_due_reminders(*args, **kwargs)
+    def send_due_reminders(self, now: str | None = None, limit: int = 50) -> dict[str, Any]:
+        pivot_iso = now or now_utc_iso()
+        pivot_dt = self._parse_iso(pivot_iso)
+        candidates = self.reminder_repo.list_due_candidates(user_id=self.user_id, limit=limit * 5)
+        due: list[dict[str, Any]] = []
+        for item in candidates:
+            is_due, parse_error = self._is_due_with_error(item, pivot_dt)
+            if parse_error:
+                self.reminder_repo.mark_failed(item["id"], reason=parse_error)
+                self._log_reminder_event(item["id"], "failed", {"reason": parse_error})
+                continue
+            if is_due:
+                due.append(item)
+        due = due[:limit]
 
+        if self.telegram_chat_id and self.reminder_sender is None:
+            return {"error": "missing_telegram_token", "items": [], "processed": 0, "failed": len(due)}
+
+        result: list[dict[str, Any]] = []
+        failed = 0
+        for item in due:
+            processed = self._deliver_and_update(item, pivot_dt)
+            if processed is None:
+                failed += 1
+            else:
+                result.append(processed)
+        self.event_logger.log("reminder_due_sent", {"now": pivot_iso, "count": len(result), "failed": failed})
+        return {"error": None, "items": result, "processed": len(result), "failed": failed}
     def list_reminders(self, limit: int = 100) -> list[dict[str, Any]]:
         return self.reminder_repo.list_for_user(user_id=self.user_id, limit=limit)
 
@@ -1741,6 +1816,60 @@ class ReminderService:
             return None
         return self.reminder_event_repo.list_for_user(user_id=self.user_id, reminder_id=reminder_id)
 
+    def _deliver_and_update(self, item: dict[str, Any], now_dt: datetime) -> dict[str, Any] | None:
+        reminder_id = item["id"]
+        status = item["status"]
+        attempt_count = int(item.get("attempt_count") or 0)
+        max_attempts = int(item.get("max_attempts") or 3)
+        requires_ack = bool(item.get("requires_ack"))
+
+        if status == "sent" and requires_ack and attempt_count >= max_attempts:
+            self.reminder_repo.mark_expired(reminder_id)
+            self._log_reminder_event(reminder_id, "expired", {"attempt_count": attempt_count})
+            return self.reminder_repo.get_for_user(self.user_id, reminder_id)
+
+        try:
+            message_ref = self._deliver_reminder_message(item)
+        except Exception:
+            self._log_reminder_event(reminder_id, "failed", {"reason": "delivery_failed"})
+            return None
+
+        new_attempt = attempt_count + 1
+        next_retry_at = None
+        if requires_ack:
+            retry_minutes = RETRY_MINUTES[min(new_attempt - 1, len(RETRY_MINUTES) - 1)]
+            next_retry_at = self._to_iso(now_dt + timedelta(minutes=retry_minutes))
+
+        self.reminder_repo.update_delivery(
+            reminder_id=reminder_id,
+            status="sent",
+            last_attempt_at=self._to_iso(now_dt),
+            attempt_count=new_attempt,
+            next_retry_at=next_retry_at,
+            message_ref=message_ref,
+        )
+
+        event_type = "retried" if status == "sent" else "sent"
+        self._log_reminder_event(
+            reminder_id,
+            event_type,
+            {"attempt_count": new_attempt, "next_retry_at": next_retry_at},
+        )
+        return self.reminder_repo.get_for_user(self.user_id, reminder_id)
+
+    def _deliver_reminder_message(self, item: dict[str, Any]) -> str:
+        message = (
+            f"提醒：{item['task_title']}\n"
+            f"用户：{self.username}\n"
+            f"提醒时间：{item['remind_at']}\n"
+            f"提醒编号：{item['id']}\n"
+            "回复仍暂时通过 CLI 处理"
+        )
+        if self.telegram_chat_id and self.reminder_sender is not None:
+            if hasattr(self.reminder_sender, "send_reminder"):
+                return self.reminder_sender.send_reminder(self.telegram_chat_id, message, int(item["id"]))
+            return self.reminder_sender.send_message(self.telegram_chat_id, message)
+        return "cli_fallback"
     def _is_due_with_error(self, item: dict[str, Any], now_dt: datetime) -> tuple[bool, str | None]:
         status = item["status"]
         try:
@@ -1764,6 +1893,9 @@ class ReminderService:
     def _parse_iso(self, value: str) -> datetime:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
+
+    def _to_iso(self, value: datetime) -> str:
+        return value.replace(microsecond=0).isoformat()
     def _log_reminder_event(self, reminder_id: int, event_type: str, payload: dict[str, Any]) -> None:
         self.reminder_event_repo.create(
             reminder_id=reminder_id,
