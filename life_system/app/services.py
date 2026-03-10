@@ -110,6 +110,11 @@ class _LegacyLifeSystemService:
             include_archived=include_archived,
         )
     def triage_inbox_to_task(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
+        # delegated_to=InboxService.triage_inbox_to_task
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.triage_inbox_to_task(inbox_item_id=inbox_item_id, created_by=created_by)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return None
@@ -135,6 +140,11 @@ class _LegacyLifeSystemService:
         return task_id
 
     def triage_inbox_to_anki(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
+        # delegated_to=InboxService.triage_inbox_to_anki
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.triage_inbox_to_anki(inbox_item_id=inbox_item_id, created_by=created_by)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return None
@@ -160,6 +170,11 @@ class _LegacyLifeSystemService:
         return draft_id
 
     def archive_inbox(self, inbox_item_id: int, created_by: str = "manual") -> str:
+        # delegated_to=InboxService.archive_inbox
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.archive_inbox(inbox_item_id=inbox_item_id, created_by=created_by)
         item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
         if item is None:
             return "not_found"
@@ -181,7 +196,6 @@ class _LegacyLifeSystemService:
         )
         self.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
         return "archived"
-
     def list_new_inbox_oldest(self, limit: int = 5) -> list[dict[str, Any]]:
         # delegated_to=InboxService.list_new_inbox_oldest
         # fallback_reason=legacy_direct_instantiation_compat
@@ -207,6 +221,11 @@ class _LegacyLifeSystemService:
             return inbox_service.triage_history(limit=limit)
         return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
     def feedback_scan(self, now: str | None = None) -> dict[str, int]:
+        # delegated_to=InboxService.feedback_scan
+        # fallback_reason=legacy_direct_instantiation_compat
+        inbox_service = getattr(self, "inbox_service", None)
+        if inbox_service is not None:
+            return inbox_service.feedback_scan(now=now)
         now_iso = now or now_utc_iso()
         now_dt = self._parse_iso(now_iso)
         stats = {
@@ -671,15 +690,35 @@ class _LegacyLifeSystemService:
         limit: int = 50,
         deck_name: str | None = None,
     ) -> list[dict[str, Any]]:
+        # delegated_to=AnkiService.list_anki_drafts
+        # fallback_reason=legacy_direct_instantiation_compat
+        anki_service = getattr(self, "anki_service", None)
+        if anki_service is not None:
+            return anki_service.list_anki_drafts(status=status, limit=limit, deck_name=deck_name)
         return self.anki_repo.list(user_id=self.user_id, status=status, limit=limit, deck_name=deck_name)
 
     def list_anki_decks(self) -> list[str]:
+        # delegated_to=AnkiService.list_anki_decks
+        # fallback_reason=legacy_direct_instantiation_compat
+        anki_service = getattr(self, "anki_service", None)
+        if anki_service is not None:
+            return anki_service.list_anki_decks()
         return self.anki_repo.list_deck_names(user_id=self.user_id)
 
     def show_anki_draft(self, draft_id: int) -> dict[str, Any] | None:
+        # delegated_to=AnkiService.show_anki_draft
+        # fallback_reason=legacy_direct_instantiation_compat
+        anki_service = getattr(self, "anki_service", None)
+        if anki_service is not None:
+            return anki_service.show_anki_draft(draft_id=draft_id)
         return self.anki_repo.get_with_trace(user_id=self.user_id, draft_id=draft_id)
 
     def archive_anki_draft(self, draft_id: int) -> str:
+        # delegated_to=AnkiService.archive_anki_draft
+        # fallback_reason=legacy_direct_instantiation_compat
+        anki_service = getattr(self, "anki_service", None)
+        if anki_service is not None:
+            return anki_service.archive_anki_draft(draft_id=draft_id)
         status = self.anki_repo.archive(user_id=self.user_id, draft_id=draft_id)
         if status == "archived":
             self.event_logger.log("anki_draft_archived", {"draft_id": draft_id})
@@ -693,6 +732,17 @@ class _LegacyLifeSystemService:
         tags: str | None = None,
         deck_name: str | None = None,
     ) -> str:
+        # delegated_to=AnkiService.update_anki_draft
+        # fallback_reason=legacy_direct_instantiation_compat
+        anki_service = getattr(self, "anki_service", None)
+        if anki_service is not None:
+            return anki_service.update_anki_draft(
+                draft_id=draft_id,
+                front=front,
+                back=back,
+                tags=tags,
+                deck_name=deck_name,
+            )
         status = self.anki_repo.update_fields(
             user_id=self.user_id,
             draft_id=draft_id,
@@ -1548,15 +1598,78 @@ class InboxService:
             limit=limit,
             include_archived=include_archived,
         )
-    def triage_inbox_to_task(self, *args: Any, **kwargs: Any) -> int | None:
-        return self._legacy.triage_inbox_to_task(*args, **kwargs)
+    def triage_inbox_to_task(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return None
+        if not self._is_inbox_triage_allowed(item):
+            return None
+        task_service = getattr(self, "task_service", None)
+        if task_service is not None:
+            task_id = task_service.create_task(title=item["content"], inbox_item_id=inbox_item_id)
+        else:
+            task_id = self._legacy.create_task(title=item["content"], inbox_item_id=inbox_item_id)
+        if task_id is None:
+            return None
+        self._record_triage_event(
+            inbox_item_id=inbox_item_id,
+            action="to_task",
+            target_type="task",
+            target_id=task_id,
+            created_by=created_by,
+            source_rule_name=item.get("rule_name"),
+            source_rule_version=item.get("rule_version"),
+        )
+        self._legacy.event_logger.log("inbox_triaged_to_task", {"inbox_item_id": inbox_item_id, "task_id": task_id})
+        return task_id
 
-    def triage_inbox_to_anki(self, *args: Any, **kwargs: Any) -> int | None:
-        return self._legacy.triage_inbox_to_anki(*args, **kwargs)
+    def triage_inbox_to_anki(self, inbox_item_id: int, created_by: str = "manual") -> int | None:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return None
+        if not self._is_inbox_triage_allowed(item):
+            return None
+        draft_id = self._legacy.create_anki_draft(
+            source_type="inbox",
+            source_id=inbox_item_id,
+            front=item["content"],
+            back="",
+        )
+        self.inbox_repo.mark_triaged(user_id=self.user_id, inbox_item_id=inbox_item_id, triaged_at=now_utc_iso())
+        self._record_triage_event(
+            inbox_item_id=inbox_item_id,
+            action="to_anki",
+            target_type="anki",
+            target_id=draft_id,
+            created_by=created_by,
+            source_rule_name=item.get("rule_name"),
+            source_rule_version=item.get("rule_version"),
+        )
+        self._legacy.event_logger.log("inbox_triaged_to_anki", {"inbox_item_id": inbox_item_id, "draft_id": draft_id})
+        return draft_id
 
-    def archive_inbox(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.archive_inbox(*args, **kwargs)
-
+    def archive_inbox(self, inbox_item_id: int, created_by: str = "manual") -> str:
+        item = self.inbox_repo.get(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if item is None:
+            return "not_found"
+        if item["status"] == "archived":
+            return "already_archived"
+        if item.get("status") != "new" or item.get("triaged_at"):
+            return "already_triaged"
+        updated = self.inbox_repo.mark_archived(user_id=self.user_id, inbox_item_id=inbox_item_id)
+        if not updated:
+            return "not_found"
+        self._record_triage_event(
+            inbox_item_id=inbox_item_id,
+            action="to_archive",
+            target_type="archive",
+            target_id=None,
+            created_by=created_by,
+            source_rule_name=item.get("rule_name"),
+            source_rule_version=item.get("rule_version"),
+        )
+        self._legacy.event_logger.log("inbox_archived", {"inbox_item_id": inbox_item_id})
+        return "archived"
     def list_new_inbox_oldest(self, limit: int = 5) -> list[dict[str, Any]]:
         return self.inbox_repo.list_new_oldest(user_id=self.user_id, limit=limit)
     def inbox_history(self, inbox_item_id: int) -> list[dict[str, Any]] | None:
@@ -1566,11 +1679,209 @@ class InboxService:
         return self.triage_event_repo.list_for_inbox(user_id=self.user_id, inbox_item_id=inbox_item_id)
     def triage_history(self, limit: int = 50) -> list[dict[str, Any]]:
         return self.triage_event_repo.list_recent(user_id=self.user_id, limit=limit)
+    def _record_triage_event(
+        self,
+        inbox_item_id: int,
+        action: str,
+        target_type: str | None,
+        target_id: int | None,
+        created_by: str,
+        source_rule_name: str | None,
+        source_rule_version: str | None,
+    ) -> None:
+        try:
+            self.triage_event_repo.create(
+                user_id=self.user_id,
+                inbox_item_id=inbox_item_id,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                created_at=now_utc_iso(),
+                created_by=created_by,
+                source_rule_name=source_rule_name,
+                source_rule_version=source_rule_version,
+                payload=None,
+            )
+        except Exception:
+            self._legacy._nonfatal_warnings.append(f"triage_event_write_failed inbox_id={inbox_item_id} action={action}")
+
     def _is_inbox_triage_allowed(self, item: dict[str, Any]) -> bool:
         return str(item.get("status") or "") == "new" and not item.get("triaged_at")
 
-    def feedback_scan(self, *args: Any, **kwargs: Any) -> dict[str, int]:
-        return self._legacy.feedback_scan(*args, **kwargs)
+    def feedback_scan(self, now: str | None = None) -> dict[str, int]:
+        now_iso = now or now_utc_iso()
+        now_dt = self._parse_iso(now_iso)
+        stats = {
+            "scanned_auto_inbox": 0,
+            "scanned_review_sends": 0,
+            "created_signals": 0,
+            "skipped_existing": 0,
+            "failed": 0,
+        }
+
+        auto_items = self.inbox_repo.list_auto_created(user_id=self.user_id)
+        for item in auto_items:
+            stats["scanned_auto_inbox"] += 1
+            subject_key = f"inbox:{item['id']}"
+            try:
+                first = self.triage_event_repo.first_for_inbox(user_id=self.user_id, inbox_item_id=int(item["id"]))
+                created_dt = self._parse_iso(str(item["created_at"]))
+                within_24_end = created_dt + timedelta(hours=24)
+                if first:
+                    triage_dt = self._parse_iso(str(first["created_at"]))
+                    if triage_dt <= within_24_end:
+                        target_type = str(first.get("target_type") or "")
+                        action = str(first.get("action") or "")
+                        signal_type = None
+                        if target_type == "task" or action == "to_task":
+                            signal_type = "auto_to_task_24h"
+                        elif target_type == "anki" or action == "to_anki":
+                            signal_type = "auto_to_anki_24h"
+                        elif target_type == "archive" or action == "to_archive":
+                            signal_type = "auto_to_archive_24h"
+                        if signal_type:
+                            delay_hours = max(0, int((triage_dt - created_dt).total_seconds() // 3600))
+                            payload = json.dumps(
+                                {
+                                    "inbox_item_id": item["id"],
+                                    "first_triage_event_id": first["id"],
+                                    "first_target_type": first.get("target_type"),
+                                    "first_target_id": first.get("target_id"),
+                                    "delay_hours": delay_hours,
+                                },
+                                ensure_ascii=True,
+                            )
+                            self._create_feedback_signal(
+                                stats=stats,
+                                subject_type="auto_inbox",
+                                subject_key=subject_key,
+                                signal_type=signal_type,
+                                window_hours=24,
+                                source_rule_name=item.get("rule_name"),
+                                source_rule_version=item.get("rule_version"),
+                                payload=payload,
+                                created_at=now_iso,
+                            )
+                else:
+                    if str(item.get("status")) == "new" and now_dt >= (created_dt + timedelta(hours=72)):
+                        payload = json.dumps(
+                            {
+                                "inbox_item_id": item["id"],
+                                "note": "still pending after 72h",
+                            },
+                            ensure_ascii=True,
+                        )
+                        self._create_feedback_signal(
+                            stats=stats,
+                            subject_type="auto_inbox",
+                            subject_key=subject_key,
+                            signal_type="auto_pending_72h",
+                            window_hours=72,
+                            source_rule_name=item.get("rule_name"),
+                            source_rule_version=item.get("rule_version"),
+                            payload=payload,
+                            created_at=now_iso,
+                        )
+            except Exception:
+                stats["failed"] += 1
+                continue
+
+        review_rows = self._legacy.state_repo.list_prefix(f"inbox_review_sent:{self.user_id}:")
+        for row in review_rows:
+            stats["scanned_review_sends"] += 1
+            key = str(row["key"])
+            try:
+                sent_at = self._parse_iso(str(row["updated_at"]))
+                end_at = sent_at + timedelta(hours=24)
+                first_triage = self.triage_event_repo.first_in_window(
+                    user_id=self.user_id,
+                    start_at=self._to_iso(sent_at),
+                    end_at=self._to_iso(end_at),
+                )
+                if first_triage:
+                    delay_hours = max(0, int((self._parse_iso(str(first_triage["created_at"])) - sent_at).total_seconds() // 3600))
+                    payload = json.dumps(
+                        {
+                            "review_sent_at": self._to_iso(sent_at),
+                            "triage_happened_at": first_triage["created_at"],
+                            "delay_hours": delay_hours,
+                            "first_triage_event_id": first_triage["id"],
+                        },
+                        ensure_ascii=True,
+                    )
+                    self._create_feedback_signal(
+                        stats=stats,
+                        subject_type="inbox_review",
+                        subject_key=key,
+                        signal_type="review_led_to_triage_24h",
+                        window_hours=24,
+                        source_rule_name=None,
+                        source_rule_version=None,
+                        payload=payload,
+                        created_at=now_iso,
+                    )
+                elif now_dt >= end_at:
+                    payload = json.dumps(
+                        {
+                            "review_sent_at": self._to_iso(sent_at),
+                            "note": "no triage in 24h",
+                        },
+                        ensure_ascii=True,
+                    )
+                    self._create_feedback_signal(
+                        stats=stats,
+                        subject_type="inbox_review",
+                        subject_key=key,
+                        signal_type="review_no_triage_24h",
+                        window_hours=24,
+                        source_rule_name=None,
+                        source_rule_version=None,
+                        payload=payload,
+                        created_at=now_iso,
+                    )
+            except Exception:
+                stats["failed"] += 1
+                continue
+
+        return stats
+
+    def _parse_iso(self, value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    def _to_iso(self, value: datetime) -> str:
+        return value.replace(microsecond=0).isoformat()
+
+    def _create_feedback_signal(
+        self,
+        stats: dict[str, int],
+        subject_type: str,
+        subject_key: str,
+        signal_type: str,
+        window_hours: int | None,
+        source_rule_name: str | None,
+        source_rule_version: str | None,
+        payload: str | None,
+        created_at: str,
+    ) -> None:
+        try:
+            created = self._legacy.feedback_repo.create_if_absent(
+                user_id=self.user_id,
+                subject_type=subject_type,
+                subject_key=subject_key,
+                signal_type=signal_type,
+                window_hours=window_hours,
+                created_at=created_at,
+                source_rule_name=source_rule_name,
+                source_rule_version=source_rule_version,
+                payload=payload,
+            )
+        except Exception:
+            stats["failed"] += 1
+            return
+        if created:
+            stats["created_signals"] += 1
+        else:
+            stats["skipped_existing"] += 1
 
     def feedback_report(self, limit: int = 50) -> list[dict[str, Any]]:
         return self._legacy.feedback_repo.list_recent(user_id=self.user_id, limit=limit)
@@ -1908,24 +2219,53 @@ class ReminderService:
 class AnkiService:
     def __init__(self, legacy: _LegacyLifeSystemService):
         self._legacy = legacy
+        self.user_id = legacy.user_id
+        self.anki_repo = legacy.anki_repo
+        self.event_logger = legacy.event_logger
 
     def create_anki_draft(self, *args: Any, **kwargs: Any) -> int:
         return self._legacy.create_anki_draft(*args, **kwargs)
 
-    def list_anki_drafts(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.list_anki_drafts(*args, **kwargs)
+    def list_anki_drafts(
+        self,
+        status: str | None = None,
+        limit: int = 50,
+        deck_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.anki_repo.list(user_id=self.user_id, status=status, limit=limit, deck_name=deck_name)
 
-    def list_anki_decks(self, *args: Any, **kwargs: Any) -> list[str]:
-        return self._legacy.list_anki_decks(*args, **kwargs)
+    def list_anki_decks(self) -> list[str]:
+        return self.anki_repo.list_deck_names(user_id=self.user_id)
 
-    def show_anki_draft(self, *args: Any, **kwargs: Any) -> dict[str, Any] | None:
-        return self._legacy.show_anki_draft(*args, **kwargs)
+    def show_anki_draft(self, draft_id: int) -> dict[str, Any] | None:
+        return self.anki_repo.get_with_trace(user_id=self.user_id, draft_id=draft_id)
 
-    def archive_anki_draft(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.archive_anki_draft(*args, **kwargs)
+    def archive_anki_draft(self, draft_id: int) -> str:
+        status = self.anki_repo.archive(user_id=self.user_id, draft_id=draft_id)
+        if status == "archived":
+            self.event_logger.log("anki_draft_archived", {"draft_id": draft_id})
+        return status
 
-    def update_anki_draft(self, *args: Any, **kwargs: Any) -> str:
-        return self._legacy.update_anki_draft(*args, **kwargs)
+    def update_anki_draft(
+        self,
+        draft_id: int,
+        front: str | None = None,
+        back: str | None = None,
+        tags: str | None = None,
+        deck_name: str | None = None,
+    ) -> str:
+        status = self.anki_repo.update_fields(
+            user_id=self.user_id,
+            draft_id=draft_id,
+            front=front,
+            back=back,
+            tags=tags,
+            deck_name=deck_name,
+        )
+        if status == "updated":
+            changed = [k for k, v in {"front": front, "back": back, "tags": tags, "deck_name": deck_name}.items() if v is not None]
+            self.event_logger.log("anki_draft_updated", {"draft_id": draft_id, "fields": changed})
+        return status
 
     def activate_anki_drafts(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._legacy.activate_anki_drafts(*args, **kwargs)
@@ -2444,12 +2784,15 @@ class InboxReviewService:
         self.state_repo = AppStateRepository(conn)
 
     def review_due(self, now: str | None = None) -> dict[str, Any]:
+        # primary_path=InboxReviewService.review_due
         return self._run(now=now, send=False)
 
     def review_send(self, now: str | None = None) -> dict[str, Any]:
+        # primary_path=InboxReviewService.review_send
         return self._run(now=now, send=True)
 
     def send_inbox_review_items_for_user(self, user_id: int, limit: int = 5) -> int:
+        # primary_path=InboxReviewService.send_inbox_review_items_for_user
         user = self.user_repo.get_by_id(user_id)
         if user is None:
             return 0
@@ -2479,6 +2822,7 @@ class InboxReviewService:
         now: str | None = None,
         review_limit: int = 5,
     ) -> dict[str, Any]:
+        # primary_path=InboxReviewService.handle_session_action
         now_iso = now or now_utc_iso()
         session = self._load_session(user_id=user_id, day=day)
         if session is None:
