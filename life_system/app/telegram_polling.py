@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from life_system.app.services import InboxReviewService, LifeSystemService
+from life_system.app.services import LifeSystemService, TelegramInboxReviewService
 from life_system.infra.db import now_utc_iso
 from life_system.infra.deepseek_client import DeepSeekClient
 from life_system.infra.repositories import AppStateRepository, UserRepository
@@ -387,7 +387,7 @@ class TelegramPollingService:
             telegram_chat_id=user.get("telegram_chat_id"),
             reminder_sender=self.telegram_sender,
         )
-        review_service = InboxReviewService(self.conn, telegram_sender=self.telegram_sender)
+        review_service = TelegramInboxReviewService(self.conn, telegram_sender=self.telegram_sender)
 
         parsed = parse_callback_data(data)
         if parsed:
@@ -623,7 +623,7 @@ class TelegramPollingService:
         action: str,
         day: str,
         user: dict[str, Any],
-        review_service: InboxReviewService,
+        review_service: TelegramInboxReviewService,
     ) -> str:
         user_id = int(user["id"])
         if action == "irms":
@@ -660,6 +660,7 @@ class TelegramPollingService:
             )
             return str(result.get("message", "今天已跳过"))
         return "无法识别操作"
+
 
 
 
