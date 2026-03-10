@@ -5,7 +5,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Sequence
 
-from life_system.app.services import InboxReviewService, LifeSystemService
+from life_system.app.services import LifeSystemService, TelegramInboxReviewService
 from life_system.app.telegram_polling import TelegramPollingService
 from life_system.infra.db import connection_ctx, ensure_database, now_utc_iso, resolve_db_path
 from life_system.infra.deepseek_client import DeepSeekClient
@@ -169,12 +169,19 @@ def build_parser() -> argparse.ArgumentParser:
     journal_today.add_argument("--limit", type=int, default=50)
     journal_today.add_argument("--type", dest="entry_type", default=None, choices=sorted(VALID_JOURNAL_TYPES))
 
-    summary = subparsers.add_parser("summary", help="Daily evidence-first summary")
+    summary = subparsers.add_parser("summary", help="Evidence-first summary")
     summary_sub = summary.add_subparsers(dest="action", required=True)
     summary_sub.add_parser("today", help="Show today's summary")
     summary_day = summary_sub.add_parser("day", help="Show summary for a specific day")
     summary_day.add_argument("--date", required=True, help="YYYY-MM-DD")
-
+    summary_week = summary_sub.add_parser("week", help="Show summary for the week containing --date")
+    summary_week.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    summary_month = summary_sub.add_parser("month", help="Show summary for the month containing --date")
+    summary_month.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    summary_quarter = summary_sub.add_parser("quarter", help="Show summary for the quarter containing --date")
+    summary_quarter.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
+    summary_year = summary_sub.add_parser("year", help="Show summary for the year containing --date")
+    summary_year.add_argument("--date", required=False, default=None, help="YYYY-MM-DD (optional, default today in Asia/Shanghai)")
     encouragement = subparsers.add_parser("encouragement", help="Generate/send daily encouragement")
     encouragement_sub = encouragement.add_subparsers(dest="action", required=True)
     encouragement_today = encouragement_sub.add_parser("today", help="Preview today's encouragement")
@@ -214,7 +221,7 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
             return _dispatch_user(user_repo, args)
         if args.entity == "inbox" and args.action in {"review-due", "review-send"}:
             sender = _build_telegram_sender_from_env()
-            review_service = InboxReviewService(conn, telegram_sender=sender)
+            review_service = TelegramInboxReviewService(conn, telegram_sender=sender)
             if args.action == "review-due":
                 stats = review_service.review_due(now=args.now)
             else:
@@ -496,6 +503,7 @@ def _format_history_payload(payload: str | None) -> str:
 
 
 def _print_summary(summary: dict[str, object]) -> None:
+    summary_title = str(summary.get("summary_title") or "每日总结")
     day = summary["day"]
     overview = summary["overview"]
     grouped = summary["journal_grouped"]
@@ -503,7 +511,7 @@ def _print_summary(summary: dict[str, object]) -> None:
     loops = summary["open_loops"]
     note = summary["note"]
 
-    print(f"== 每日总结 | {day} ==")
+    print(f"== {summary_title} | {day} ==")
     print("【今日概览】")
     print(
         "收件箱: 新增={inbox_captured}, 已分流={inbox_triaged}, 已归档={inbox_archived}".format(**overview)
@@ -543,7 +551,7 @@ def _print_summary(summary: dict[str, object]) -> None:
     avg_focus = state.get("avg_focus") if isinstance(state, dict) else None
     avg_mood = state.get("avg_mood") if isinstance(state, dict) else None
     if avg_energy is None and avg_focus is None and avg_mood is None:
-        print("- no state data")
+        print("- 无状态数据")
     else:
         def _fmt_avg(v: object) -> str:
             return "-" if v is None else f"{float(v):.1f}"
@@ -558,10 +566,6 @@ def _print_summary(summary: dict[str, object]) -> None:
 
     print("【今日短注】")
     print(note)
-
-    dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
-    return dt.astimezone(CST).strftime("%Y-%m-%d %H:%M")
-
 
 def _to_cst_display_with_seconds(iso_text: str) -> str:
     dt = datetime.fromisoformat(iso_text.replace("Z", "+00:00"))
@@ -1045,9 +1049,41 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
         _print_summary(summary)
         return 0
 
+    if entity == "summary" and action == "week":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_week_summary(args.date)
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "month":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_month_summary(args.date)
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "quarter":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_quarter_summary(args.date)
+        _print_summary(summary)
+        return 0
+
+    if entity == "summary" and action == "year":
+        if args.date and not _validate_date_yyyy_mm_dd(args.date):
+            return 1
+        summary = service.build_year_summary(args.date)
+        _print_summary(summary)
+        return 0
     parser = build_parser()
     parser.print_help()
     return 1
+
+
+
+
+
 
 
 

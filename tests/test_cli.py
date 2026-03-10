@@ -1,4 +1,4 @@
-import json
+﻿import json
 import sqlite3
 import tempfile
 import unittest
@@ -31,14 +31,14 @@ class TestCliFlows(unittest.TestCase):
             return {"ok": True, "result": {"message_id": 1}}
 
         with patch.object(sender, "_post", side_effect=fake_post):
-            sender.send_message_with_focus_keyboard("1001", "状态")
+            sender.send_message_with_focus_keyboard("1001", "鐘舵€?)
         self.assertEqual(calls[0][0], "sendMessage")
         self.assertIn("reply_markup", calls[0][1])
         markup = json.loads(calls[0][1]["reply_markup"])
         buttons = [row[0]["text"] for row in markup["keyboard"]]
         self.assertEqual(
             buttons,
-            ["1 很难专注", "2 比较分散", "3 一般", "4 比较专注", "5 高度专注"],
+            ["1 寰堥毦涓撴敞", "2 姣旇緝鍒嗘暎", "3 涓€鑸?, "4 姣旇緝涓撴敞", "5 楂樺害涓撴敞"],
         )
 
     def test_telegram_sender_inbox_review_inline_buttons(self) -> None:
@@ -68,19 +68,19 @@ class TestCliFlows(unittest.TestCase):
         self.assertIsNone(parse_callback_data("ra:x"))
 
     def test_telegram_journal_parsing(self) -> None:
-        self.assertEqual(parse_journal_message("今天完成了背单词")["entry_type"], "activity")
-        self.assertEqual(parse_journal_message("/r 今天启动很难")["entry_type"], "reflection")
-        self.assertEqual(parse_journal_message("/w 今天有进展")["entry_type"], "win")
+        self.assertEqual(parse_journal_message("浠婂ぉ瀹屾垚浜嗚儗鍗曡瘝")["entry_type"], "activity")
+        self.assertEqual(parse_journal_message("/r 浠婂ぉ鍚姩寰堥毦")["entry_type"], "reflection")
+        self.assertEqual(parse_journal_message("/w 浠婂ぉ鏈夎繘灞?)["entry_type"], "win")
         self.assertEqual(parse_journal_message("/help")["kind"], "help")
         focus_only = parse_journal_message("/c focus=4")
         self.assertEqual(focus_only["entry_type"], "checkin")
         self.assertEqual(focus_only["focus_level"], 4)
-        self.assertEqual(focus_only["content"], "状态签到")
-        btn = parse_journal_message("4 比较专注")
+        self.assertEqual(focus_only["content"], "鐘舵€佺鍒?)
+        btn = parse_journal_message("4 姣旇緝涓撴敞")
         self.assertEqual(btn["entry_type"], "checkin")
         self.assertEqual(btn["focus_level"], 4)
-        self.assertEqual(btn["content"], "状态签到")
-        parsed = parse_journal_message("/c energy=2 focus=3 mood=4 今天状态一般")
+        self.assertEqual(btn["content"], "鐘舵€佺鍒?)
+        parsed = parse_journal_message("/c energy=2 focus=3 mood=4 浠婂ぉ鐘舵€佷竴鑸?)
         self.assertEqual(parsed["entry_type"], "checkin")
         self.assertEqual(parsed["energy_level"], 2)
         self.assertEqual(parsed["focus_level"], 3)
@@ -150,13 +150,13 @@ class TestCliFlows(unittest.TestCase):
             self.assertIn("telegram chat id set for xiaoyu", out1)
             rc2, out2 = run_with_output(["--db", db_path, "user", "list"])
             self.assertEqual(rc2, 0)
-            self.assertIn("Telegram:已配置", out2)
+            self.assertIn("Telegram:configured", out2)
             rc3, out3 = run_with_output(["--db", db_path, "user", "clear-telegram", "xiaoyu"])
             self.assertEqual(rc3, 0)
             self.assertIn("telegram chat id cleared for xiaoyu", out3)
             rc4, out4 = run_with_output(["--db", db_path, "user", "list"])
             self.assertEqual(rc4, 0)
-            self.assertIn("Telegram:未配置", out4)
+            self.assertIn("Telegram:not_configured", out4)
 
     def test_user_isolation_for_inbox_task_anki_lists(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -507,7 +507,7 @@ class TestCliFlows(unittest.TestCase):
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
-                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "明天联系房东"}}]
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "鏄庡ぉ鑱旂郴鎴夸笢"}}]
             )
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 run_with_output(["--db", str(db_path), "telegram", "poll"])
@@ -635,7 +635,7 @@ class TestCliFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
             run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
-            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}}])
+            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "涔拌€冲"}}])
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 run_with_output(["--db", db_path, "telegram", "poll"])
             run_with_output(["--db", db_path, "inbox", "triage", "1", "task"])
@@ -670,7 +670,7 @@ class TestCliFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
-            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}}])
+            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "涔拌€冲"}}])
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 run_with_output(["--db", str(db_path), "telegram", "poll"])
             run_with_output(["--db", str(db_path), "inbox", "triage", "1", "task"])
@@ -707,9 +707,9 @@ class TestCliFlows(unittest.TestCase):
             run_with_output(["--db", str(db), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
                 [
-                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}},
-                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "明天联系房东"}},
-                    {"update_id": 3, "message": {"chat": {"id": 1001, "type": "private"}, "text": "待办：改完PPT"}},
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "涔拌€冲"}},
+                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "鏄庡ぉ鑱旂郴鎴夸笢"}},
+                    {"update_id": 3, "message": {"chat": {"id": 1001, "type": "private"}, "text": "寰呭姙锛氭敼瀹孭PT"}},
                 ]
             )
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
@@ -909,21 +909,46 @@ class TestCliFlows(unittest.TestCase):
 
             rc1, out1 = run_with_output(["--db", db_path, "summary", "today"])
             self.assertEqual(rc1, 0)
-            self.assertIn("每日总结", out1)
-            self.assertIn("今日概览", out1)
-            self.assertIn("日志条目: 1", out1)
+            self.assertIn("姣忔棩鎬荤粨", out1)
+            self.assertIn("浠婃棩姒傝", out1)
+            self.assertIn("鏃ュ織鏉＄洰: 1", out1)
 
             today = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
             rc2, out2 = run_with_output(["--db", db_path, "summary", "day", "--date", today])
             self.assertEqual(rc2, 0)
             self.assertIn(today, out2)
 
+
+    def test_summary_week_month_quarter_year(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = str(Path(tmp) / "life.db")
+            run_with_output(["--db", db_path, "journal", "add", "period log", "--type", "activity"])
+
+            rc_w, out_w = run_with_output(["--db", db_path, "summary", "week", "--date", "2026-03-10"])
+            rc_m, out_m = run_with_output(["--db", db_path, "summary", "month", "--date", "2026-03-10"])
+            rc_q, out_q = run_with_output(["--db", db_path, "summary", "quarter", "--date", "2026-03-10"])
+            rc_y, out_y = run_with_output(["--db", db_path, "summary", "year", "--date", "2026-03-10"])
+
+            self.assertEqual(rc_w, 0)
+            self.assertEqual(rc_m, 0)
+            self.assertEqual(rc_q, 0)
+            self.assertEqual(rc_y, 0)
+
+            self.assertIn("每周总结", out_w)
+            self.assertIn("每月总结", out_m)
+            self.assertIn("季度总结", out_q)
+            self.assertIn("年度总结", out_y)
+            self.assertIn("period log", out_w)
+
     def test_summary_invalid_date(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
-            rc, out = run_with_output(["--db", db_path, "summary", "day", "--date", "2026/03/07"])
-            self.assertEqual(rc, 1)
-            self.assertIn("invalid date: must be YYYY-MM-DD", out)
+            actions = ["day", "week", "month", "quarter", "year"]
+            for action in actions:
+                args = ["--db", db_path, "summary", action, "--date", "2026/03/07"]
+                rc, out = run_with_output(args)
+                self.assertEqual(rc, 1)
+                self.assertIn("invalid date: must be YYYY-MM-DD", out)
 
     def test_summary_multi_user_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -943,13 +968,13 @@ class TestCliFlows(unittest.TestCase):
             db_path = str(Path(tmp) / "life.db")
             run_with_output(["--db", db_path, "journal", "add", "stateful", "--type", "checkin", "--energy", "4", "--focus", "3", "--mood", "5"])
             _, out1 = run_with_output(["--db", db_path, "summary", "today"])
-            self.assertIn("平均能量", out1)
+            self.assertIn("骞冲潎鑳介噺", out1)
 
         with tempfile.TemporaryDirectory() as tmp2:
             db_path2 = str(Path(tmp2) / "life2.db")
             run_with_output(["--db", db_path2, "journal", "add", "no state", "--type", "activity"])
             _, out2 = run_with_output(["--db", db_path2, "summary", "today"])
-            self.assertIn("无状态数据", out2)
+            self.assertIn("鏃犵姸鎬佹暟鎹?, out2)
 
     def test_summary_uses_asia_shanghai_day_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -966,8 +991,8 @@ class TestCliFlows(unittest.TestCase):
 
             _, out_cst_day = run_with_output(["--db", str(db_path), "summary", "day", "--date", "2026-03-07"])
             _, out_prev = run_with_output(["--db", str(db_path), "summary", "day", "--date", "2026-03-06"])
-            self.assertIn("任务: 新建=1", out_cst_day)
-            self.assertIn("任务: 新建=0", out_prev)
+            self.assertIn("浠诲姟: 鏂板缓=1", out_cst_day)
+            self.assertIn("浠诲姟: 鏂板缓=0", out_prev)
 
     def test_summary_chinese_labels_and_sent_retried_split(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -979,13 +1004,13 @@ class TestCliFlows(unittest.TestCase):
 
             today_cst = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d")
             _, out = run_with_output(["--db", db_path, "summary", "day", "--date", today_cst])
-            self.assertIn("收件箱:", out)
-            self.assertIn("任务:", out)
-            self.assertIn("提醒:", out)
-            self.assertIn("未闭环事项", out)
+            self.assertIn("鏀朵欢绠?", out)
+            self.assertIn("浠诲姟:", out)
+            self.assertIn("鎻愰啋:", out)
+            self.assertIn("鏈棴鐜簨椤?, out)
             self.assertNotIn("inbox:", out)
-            self.assertIn("首次发送=1", out)
-            self.assertIn("重试=1", out)
+            self.assertIn("棣栨鍙戦€?1", out)
+            self.assertIn("閲嶈瘯=1", out)
 
     def test_summary_journal_time_display_in_beijing_time(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1010,7 +1035,7 @@ class TestCliFlows(unittest.TestCase):
             for i in range(5):
                 run_with_output(["--db", db_path, "journal", "add", f"log-{i}", "--type", "activity"])
             _, out = run_with_output(["--db", db_path, "summary", "today"])
-            lines = [line for line in out.splitlines() if line.startswith("- 活动") or line.startswith("- 反思") or line.startswith("- 小胜利") or line.startswith("- 状态记录")]
+            lines = [line for line in out.splitlines() if line.startswith("- 娲诲姩") or line.startswith("- 鍙嶆€?) or line.startswith("- 灏忚儨鍒?) or line.startswith("- 鐘舵€佽褰?)]
             self.assertLessEqual(len(lines), 3)
 
     def test_summary_note_is_stable_chinese_template(self) -> None:
@@ -1019,11 +1044,11 @@ class TestCliFlows(unittest.TestCase):
             run_with_output(["--db", db_path, "journal", "add", "only log", "--type", "activity"])
             _, out = run_with_output(["--db", db_path, "summary", "today"])
             allowed = [
-                "今天有持续记录，也有实际推进，可以继续保持这种小步前进。",
-                "今天有真实完成项，节奏是稳定的。",
-                "今天留下了清晰的活动和状态证据，说明你没有脱离系统。",
-                "今天虽然正式完成项不多，但有真实记录和闭环动作。",
-                "今天证据还不多，先补一条简短记录会更稳。",
+                "浠婂ぉ鏈夋寔缁褰曪紝涔熸湁瀹為檯鎺ㄨ繘锛屽彲浠ョ户缁繚鎸佽繖绉嶅皬姝ュ墠杩涖€?,
+                "浠婂ぉ鏈夌湡瀹炲畬鎴愰」锛岃妭濂忔槸绋冲畾鐨勩€?,
+                "浠婂ぉ鐣欎笅浜嗘竻鏅扮殑娲诲姩鍜岀姸鎬佽瘉鎹紝璇存槑浣犳病鏈夎劚绂荤郴缁熴€?,
+                "浠婂ぉ铏界劧姝ｅ紡瀹屾垚椤逛笉澶氾紝浣嗘湁鐪熷疄璁板綍鍜岄棴鐜姩浣溿€?,
+                "浠婂ぉ璇佹嵁杩樹笉澶氾紝鍏堣ˉ涓€鏉＄畝鐭褰曚細鏇寸ǔ銆?,
             ]
             self.assertTrue(any(note in out for note in allowed))
 
@@ -1039,7 +1064,7 @@ class TestCliFlows(unittest.TestCase):
                     ["--db", db_path, "reminder", "due", "--send", "--now", "2026-03-07T00:00:00+00:00"]
                 )
             self.assertEqual(rc, 1)
-            self.assertIn("TELEGRAM_BOT_TOKEN 未设置", out)
+            self.assertIn("TELEGRAM_BOT_TOKEN 鏈缃?, out)
 
     def test_reminder_due_send_fallback_without_chat_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1054,7 +1079,7 @@ class TestCliFlows(unittest.TestCase):
         class FakeSender:
             def send_message(self, chat_id: str, text: str) -> str:
                 assert chat_id == "999999"
-                assert "提醒：" in text
+                assert "鎻愰啋锛? in text
                 return "m123"
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1092,7 +1117,7 @@ class TestCliFlows(unittest.TestCase):
             with patch.dict("os.environ", {}, clear=True):
                 rc, out = run_with_output(["--db", db_path, "telegram", "poll"])
             self.assertEqual(rc, 1)
-            self.assertIn("TELEGRAM_BOT_TOKEN 未设置", out)
+            self.assertIn("TELEGRAM_BOT_TOKEN 鏈缃?, out)
 
     def test_telegram_poll_ack_snooze_skip_and_already_processed(self) -> None:
         class FakeSender:
@@ -1135,8 +1160,8 @@ class TestCliFlows(unittest.TestCase):
             self.assertIn("acked_via: telegram", s1)
             self.assertIn("status: snoozed", s2)
             self.assertIn("status: skipped", s3)
-            self.assertIn(("c1", "已确认"), fake.answers)
-            self.assertIn(("c4", "已经处理过了"), fake.answers)
+            self.assertIn(("c1", "宸茬‘璁?), fake.answers)
+            self.assertIn(("c4", "宸茬粡澶勭悊杩囦簡"), fake.answers)
 
     def test_telegram_poll_user_isolation(self) -> None:
         class FakeSender:
@@ -1169,7 +1194,7 @@ class TestCliFlows(unittest.TestCase):
             self.assertEqual(rc, 0)
             _, show = run_with_output(["--db", db_path, "--user", "xiaoyu", "reminder", "show", "1"])
             self.assertNotIn("status: acknowledged", show)
-            self.assertIn(("c10", "提醒不存在或无权限"), fake.answers)
+            self.assertIn(("c10", "鎻愰啋涓嶅瓨鍦ㄦ垨鏃犳潈闄?), fake.answers)
 
     def test_telegram_poll_offset_persistence(self) -> None:
         class FakeSender:
@@ -1238,7 +1263,7 @@ class TestCliFlows(unittest.TestCase):
             _, r2 = run_with_output(["--db", str(db_path), "reminder", "show", "2"])
             self.assertIn("status: acknowledged", r1)
             self.assertIn("status: acknowledged", r2)
-            self.assertIn(("c202", "已确认"), fake.answers)
+            self.assertIn(("c202", "宸茬‘璁?), fake.answers)
             with connection_ctx(db_path) as conn:
                 row = conn.execute("SELECT value FROM app_state WHERE key='telegram.update_offset'").fetchone()
                 self.assertEqual(row["value"], "203")
@@ -1284,7 +1309,7 @@ class TestCliFlows(unittest.TestCase):
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
-                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "今天完成了背单词"}}]
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "浠婂ぉ瀹屾垚浜嗚儗鍗曡瘝"}}]
             )
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
@@ -1295,11 +1320,11 @@ class TestCliFlows(unittest.TestCase):
                     "SELECT entry_type, content, energy_level, focus_level, mood_level FROM journal_entries WHERE user_id=1"
                 ).fetchone()
                 self.assertEqual(row["entry_type"], "activity")
-                self.assertEqual(row["content"], "今天完成了背单词")
+                self.assertEqual(row["content"], "浠婂ぉ瀹屾垚浜嗚儗鍗曡瘝")
                 self.assertIsNone(row["energy_level"])
                 inbox_count = conn.execute("SELECT COUNT(*) AS c FROM inbox_items WHERE user_id=1").fetchone()
                 self.assertEqual(inbox_count["c"], 0)
-            self.assertTrue(any("活动" in text for _, text in fake.sent))
+            self.assertTrue(any("娲诲姩" in text for _, text in fake.sent))
 
     def test_telegram_poll_r_w_c_to_journal_types(self) -> None:
         class FakeSender:
@@ -1327,13 +1352,13 @@ class TestCliFlows(unittest.TestCase):
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
                 [
-                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/r 今天启动很难"}},
-                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/w 今天至少没脱离系统"}},
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/r 浠婂ぉ鍚姩寰堥毦"}},
+                    {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/w 浠婂ぉ鑷冲皯娌¤劚绂荤郴缁?}},
                     {
                         "update_id": 3,
                         "message": {
                             "chat": {"id": 1001, "type": "private"},
-                            "text": "/c energy=2 focus=2 mood=3 今天状态一般",
+                            "text": "/c energy=2 focus=2 mood=3 浠婂ぉ鐘舵€佷竴鑸?,
                         },
                     },
                 ]
@@ -1384,7 +1409,7 @@ class TestCliFlows(unittest.TestCase):
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             updates = []
-            labels = ["1 很难专注", "2 比较分散", "3 一般", "4 比较专注", "5 高度专注"]
+            labels = ["1 寰堥毦涓撴敞", "2 姣旇緝鍒嗘暎", "3 涓€鑸?, "4 姣旇緝涓撴敞", "5 楂樺害涓撴敞"]
             for i, label in enumerate(labels, start=1):
                 updates.append({"update_id": i, "message": {"chat": {"id": 1001, "type": "private"}, "text": label}})
             fake = FakeSender(updates)
@@ -1399,7 +1424,7 @@ class TestCliFlows(unittest.TestCase):
                 self.assertEqual(len(rows), 5)
                 for idx, row in enumerate(rows, start=1):
                     self.assertEqual(row["entry_type"], "checkin")
-                    self.assertEqual(row["content"], "状态签到")
+                    self.assertEqual(row["content"], "鐘舵€佺鍒?)
                     self.assertEqual(row["focus_level"], idx)
                     self.assertIsNone(row["energy_level"])
                     self.assertIsNone(row["mood_level"])
@@ -1430,7 +1455,7 @@ class TestCliFlows(unittest.TestCase):
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
                 [
-                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/c energy=9 今天很乱"}},
+                    {"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/c energy=9 浠婂ぉ寰堜贡"}},
                     {"update_id": 2, "message": {"chat": {"id": 1001, "type": "private"}, "text": "/r   "}},
                 ]
             )
@@ -1444,8 +1469,8 @@ class TestCliFlows(unittest.TestCase):
             with connection_ctx(db_path) as conn:
                 row = conn.execute("SELECT COUNT(*) AS c FROM journal_entries").fetchone()
                 self.assertEqual(row["c"], 0)
-            self.assertTrue(any("1 到 5" in text for _, text in fake.sent))
-            self.assertTrue(any("未识别到可记录内容" in text for _, text in fake.sent))
+            self.assertTrue(any("1 鍒?5" in text for _, text in fake.sent))
+            self.assertTrue(any("鏈瘑鍒埌鍙褰曞唴瀹? in text for _, text in fake.sent))
 
     def test_telegram_poll_chat_id_int_string_match(self) -> None:
         class FakeSender:
@@ -1554,7 +1579,7 @@ class TestCliFlows(unittest.TestCase):
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
-                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "只要记下来就好"}}]
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "鍙璁颁笅鏉ュ氨濂?}}]
             )
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
@@ -1563,7 +1588,7 @@ class TestCliFlows(unittest.TestCase):
             with connection_ctx(db_path) as conn:
                 row = conn.execute("SELECT entry_type, content FROM journal_entries WHERE user_id=1").fetchone()
                 self.assertEqual(row["entry_type"], "activity")
-                self.assertEqual(row["content"], "只要记下来就好")
+                self.assertEqual(row["content"], "鍙璁颁笅鏉ュ氨濂?)
 
     def test_telegram_poll_offset_with_message_and_callback(self) -> None:
         class FakeSender:
@@ -1614,7 +1639,7 @@ class TestCliFlows(unittest.TestCase):
                 with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=FakeSender()):
                     rc, out = run_with_output(["--db", db_path, "telegram", "setup-menu"])
             self.assertEqual(rc, 0)
-            self.assertIn("/r /w /c /ir /help", out)
+            self.assertIn("/r /w /c /ir /encouragement /help", out)
 
     def test_telegram_setup_keyboard_command(self) -> None:
         class FakeSender:
@@ -1702,9 +1727,9 @@ class TestCliFlows(unittest.TestCase):
                 rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
             self.assertEqual(rc, 0)
             self.assertIn("processed=3", out)
-            self.assertIn(("c1", "已转为任务"), fake.answers)
-            self.assertIn(("c2", "已归档"), fake.answers)
-            self.assertIn(("c3", "先留在收件箱"), fake.answers)
+            self.assertIn(("c1", "宸茶浆涓轰换鍔?), fake.answers)
+            self.assertIn(("c2", "宸插綊妗?), fake.answers)
+            self.assertIn(("c3", "鍏堢暀鍦ㄦ敹浠剁"), fake.answers)
             with connection_ctx(db_path) as conn:
                 t = conn.execute("SELECT COUNT(*) AS c FROM tasks WHERE user_id=1").fetchone()
                 i1 = conn.execute("SELECT status FROM inbox_items WHERE id=1").fetchone()
@@ -1759,9 +1784,9 @@ class TestCliFlows(unittest.TestCase):
                 rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
             self.assertEqual(rc, 0)
             self.assertIn("processed=3", out)
-            self.assertIn(("c1", "已处理过了"), fake.answers)
-            self.assertIn(("c2", "无法识别操作"), fake.answers)
-            self.assertIn(("c3", "已归档"), fake.answers)
+            self.assertIn(("c1", "宸插鐞嗚繃浜?), fake.answers)
+            self.assertIn(("c2", "鏃犳硶璇嗗埆鎿嶄綔"), fake.answers)
+            self.assertIn(("c3", "宸插綊妗?), fake.answers)
             with connection_ctx(db_path) as conn:
                 t = conn.execute("SELECT COUNT(*) AS c FROM tasks WHERE user_id=1").fetchone()
                 te = conn.execute("SELECT COUNT(*) AS c FROM triage_events WHERE user_id=1").fetchone()
@@ -1804,7 +1829,7 @@ class TestCliFlows(unittest.TestCase):
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 rc, _ = run_with_output(["--db", str(db_path), "telegram", "poll"])
             self.assertEqual(rc, 0)
-            self.assertIn(("c1", "收件箱不存在或无权限"), fake.answers)
+            self.assertIn(("c1", "鏀朵欢绠变笉瀛樺湪鎴栨棤鏉冮檺"), fake.answers)
 
     def test_telegram_inbox_callback_rule_passthrough_to_triage_event(self) -> None:
         class FakeSender:
@@ -1893,7 +1918,7 @@ class TestCliFlows(unittest.TestCase):
                 rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
             self.assertEqual(rc, 0)
             self.assertIn("messages=1", out)
-            self.assertTrue(any("普通文本" in text and "/r" in text and "/w" in text and "/c" in text for _, text in fake.sent))
+            self.assertTrue(any("鏅€氭枃鏈? in text and "/r" in text and "/w" in text and "/c" in text for _, text in fake.sent))
 
     def test_telegram_activity_plain_text_no_inbox(self) -> None:
         class FakeSender:
@@ -1935,9 +1960,9 @@ class TestCliFlows(unittest.TestCase):
 
     def test_telegram_activity_inbox_strong_signal_cases(self) -> None:
         cases = [
-            "记得给老师发邮件",
-            "明天联系房东",
-            "买耳塞",
+            "璁板緱缁欒€佸笀鍙戦偖浠?,
+            "鏄庡ぉ鑱旂郴鎴夸笢",
+            "涔拌€冲",
         ]
 
         class FakeSender:
@@ -1978,13 +2003,13 @@ class TestCliFlows(unittest.TestCase):
                 self.assertEqual(len(inbox_rows), 3)
                 self.assertEqual([r["content"] for r in inbox_rows], cases)
                 self.assertTrue(all(r["source"] == "telegram_auto" for r in inbox_rows))
-            self.assertTrue(any("已加入收件箱" in text for _, text in fake.sent))
+            self.assertTrue(any("宸插姞鍏ユ敹浠剁" in text for _, text in fake.sent))
 
     def test_telegram_activity_no_inbox_exclusion_cases(self) -> None:
         cases = [
-            "今天很累",
-            "我刚刚把作业交了",
-            "要不要换个学习方法",
+            "浠婂ぉ寰堢疮",
+            "鎴戝垰鍒氭妸浣滀笟浜や簡",
+            "瑕佷笉瑕佹崲涓涔犳柟娉?,
         ]
 
         class FakeSender:
@@ -2049,7 +2074,7 @@ class TestCliFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
-            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "买耳塞"}}])
+            fake = FakeSender([{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "涔拌€冲"}}])
             with patch("life_system.app.telegram_polling.LifeSystemService.capture_inbox", side_effect=RuntimeError("db failed")):
                 with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                     rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
@@ -2084,7 +2109,7 @@ class TestCliFlows(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = str(Path(tmp) / "life.db")
             run_with_output(["--db", db_path, "user", "set-telegram", "xiaoyu", "1001"])
-            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "待办：改完PPT"])
+            run_with_output(["--db", db_path, "--user", "xiaoyu", "capture", "寰呭姙锛氭敼瀹孭PT"])
             fake = FakeSender()
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 rc1, out1 = run_with_output(
@@ -2139,7 +2164,7 @@ class TestCliFlows(unittest.TestCase):
                 rc, out = run_with_output(["--db", db_path, "inbox", "review-send", "--now", "2026-03-08T12:30:00+00:00"])
             self.assertEqual(rc, 0)
             self.assertIn("escalated=1", out)
-            self.assertTrue(any("强提醒" in text for _, text in fake.sent))
+            self.assertTrue(any("寮烘彁閱? in text for _, text in fake.sent))
 
     def test_inbox_review_escalated_by_oldest_72h(self) -> None:
         class FakeSender:
@@ -2166,7 +2191,7 @@ class TestCliFlows(unittest.TestCase):
                 rc, out = run_with_output(["--db", str(db_path), "inbox", "review-send", "--now", "2026-03-08T12:30:00+00:00"])
             self.assertEqual(rc, 0)
             self.assertIn("escalated=1", out)
-            self.assertTrue(any("强提醒" in text for _, text in fake.sent))
+            self.assertTrue(any("寮烘彁閱? in text for _, text in fake.sent))
 
     def test_inbox_review_fallback_cli_without_chat_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2213,7 +2238,7 @@ class TestCliFlows(unittest.TestCase):
             db_path = Path(tmp) / "life.db"
             run_with_output(["--db", str(db_path), "user", "set-telegram", "xiaoyu", "1001"])
             fake = FakeSender(
-                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "明天联系房东"}}]
+                [{"update_id": 1, "message": {"chat": {"id": 1001, "type": "private"}, "text": "鏄庡ぉ鑱旂郴鎴夸笢"}}]
             )
             with patch("life_system.cli.commands._build_telegram_sender_from_env", return_value=fake):
                 rc, out = run_with_output(["--db", str(db_path), "telegram", "poll"])
@@ -2477,3 +2502,4 @@ class TestCliFlows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

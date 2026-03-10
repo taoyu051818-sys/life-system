@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
@@ -19,6 +19,9 @@ from life_system.infra.repositories import UserRepository
 CST = timezone(timedelta(hours=8), name="Asia/Shanghai")
 SESSION_KEY = "web_authed"
 SESSION_UNTIL_KEY = "web_auth_until"
+SHARE_SESSION_SCOPE_KEY = "web_share_scope"
+SHARE_SESSION_USER_ID_KEY = "web_share_user_id"
+SHARE_SESSION_UNTIL_KEY = "web_share_until"
 
 
 def create_app(db_path: str | None = None) -> FastAPI:
@@ -86,6 +89,14 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "logged_in": _is_authenticated(request),
             "active_page": _resolve_active_page(request.url.path),
         }
+
+    def _build_anki_review_service(conn: Any, request: Request) -> LifeSystemService | None:
+        if _is_authenticated(request):
+            return _build_user_service(conn, active_username)
+        share_user_id = _get_share_session_user_id(request, scope="anki_review")
+        if share_user_id is None:
+            return None
+        return _build_user_service_by_id(conn, share_user_id)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -567,23 +578,39 @@ def create_app(db_path: str | None = None) -> FastAPI:
             )
 
 
+    @app.get("/share/anki-review", response_class=HTMLResponse)
+    def share_anki_review_entry(request: Request, t: str = Query("")) -> HTMLResponse:
+        token = t.strip()
+        if not token:
+            return HTMLResponse("invalid or expired share token", status_code=400)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            result = service.consume_anki_review_share_token(token=token)
+        if not bool(result.get("ok")):
+            return HTMLResponse("invalid or expired share token", status_code=400)
+        request.session[SHARE_SESSION_SCOPE_KEY] = "anki_review"
+        request.session[SHARE_SESSION_USER_ID_KEY] = int(result["user_id"])
+        request.session[SHARE_SESSION_UNTIL_KEY] = _to_iso(datetime.now(timezone.utc) + timedelta(minutes=120))
+        return RedirectResponse(url="/anki/review", status_code=303)
+
     @app.get("/anki/review", response_class=HTMLResponse)
     def anki_review_page(
         request: Request,
         deck_name: str | None = Query(None),
         limit: int = Query(50, ge=1, le=200),
     ) -> HTMLResponse:
-        if not _is_authenticated(request):
-            return RedirectResponse(url="/login", status_code=302)
         deck_filter = _none_if_blank(deck_name)
         with connection_ctx(current_db_path) as conn:
-            service = _build_user_service(conn, active_username)
+            service = _build_anki_review_service(conn, request)
+            if service is None:
+                return RedirectResponse(url="/login", status_code=302)
             due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
             deck_options = service.list_anki_decks()
         card = due_cards[0] if due_cards else None
         ctx = _base_ctx(request)
         ctx.update(
             {
+                "active_user": service.username,
                 "card": card,
                 "due_count": len(due_cards),
                 "total_due": len(due_cards),
@@ -599,8 +626,6 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/anki/review/reveal", response_class=HTMLResponse)
     async def anki_review_reveal(request: Request) -> HTMLResponse:
-        if not _is_authenticated(request):
-            return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         deck_filter = _none_if_blank(form.get("deck_name"))
         try:
@@ -608,7 +633,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
         except ValueError:
             limit = 50
         with connection_ctx(current_db_path) as conn:
-            service = _build_user_service(conn, active_username)
+            service = _build_anki_review_service(conn, request)
+            if service is None:
+                return RedirectResponse(url="/login", status_code=302)
             due_cards = service.list_due_anki_cards(limit=limit, deck_name=deck_filter)
         card = due_cards[0] if due_cards else None
         return templates.TemplateResponse(
@@ -616,7 +643,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "partials/_anki_review_session_panel.html",
             {
                 "request": request,
-                "active_user": active_username,
+                "active_user": service.username,
                 "card": card,
                 "due_count": len(due_cards),
                 "total_due": len(due_cards),
@@ -630,8 +657,6 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
     @app.post("/anki/review/rate", response_class=HTMLResponse)
     async def anki_review_rate(request: Request) -> HTMLResponse:
-        if not _is_authenticated(request):
-            return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         rating = (form.get("rate") or "").strip().lower()
         deck_filter = _none_if_blank(form.get("deck_name"))
@@ -646,7 +671,9 @@ def create_app(db_path: str | None = None) -> FastAPI:
 
         flash = None
         with connection_ctx(current_db_path) as conn:
-            service = _build_user_service(conn, active_username)
+            service = _build_anki_review_service(conn, request)
+            if service is None:
+                return RedirectResponse(url="/login", status_code=302)
             if card_id <= 0:
                 flash = "invalid card id"
             else:
@@ -664,7 +691,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             "partials/_anki_review_session_panel.html",
             {
                 "request": request,
-                "active_user": active_username,
+                "active_user": service.username,
                 "card": card,
                 "due_count": len(due_cards),
                 "total_due": len(due_cards),
@@ -726,6 +753,14 @@ def _build_user_service(conn: Any, username: str) -> LifeSystemService:
     return LifeSystemService(conn=conn, user_id=int(user["id"]), username=str(user["username"]), telegram_chat_id=user.get("telegram_chat_id"), reminder_sender=None)
 
 
+
+def _build_user_service_by_id(conn: Any, user_id: int) -> LifeSystemService:
+    user_repo = UserRepository(conn)
+    user = user_repo.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"user not found: {user_id}")
+    return LifeSystemService(conn=conn, user_id=int(user["id"]), username=str(user["username"]), telegram_chat_id=user.get("telegram_chat_id"), reminder_sender=None)
+
 def _fmt_bj_time(value: str | None) -> str:
     if not value:
         return "-"
@@ -748,6 +783,23 @@ def _is_authenticated(request: Request) -> bool:
     except ValueError:
         return False
 
+
+
+def _get_share_session_user_id(request: Request, scope: str) -> int | None:
+    session = request.session
+    if session.get(SHARE_SESSION_SCOPE_KEY) != scope:
+        return None
+    until = session.get(SHARE_SESSION_UNTIL_KEY)
+    user_id = session.get(SHARE_SESSION_USER_ID_KEY)
+    if not until or user_id is None:
+        return None
+    try:
+        until_dt = datetime.fromisoformat(str(until).replace("Z", "+00:00"))
+        if until_dt <= datetime.now(timezone.utc):
+            return None
+        return int(user_id)
+    except (ValueError, TypeError):
+        return None
 
 def _to_iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat()

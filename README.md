@@ -72,6 +72,10 @@ python -m life_system.main journal today
 # Summary
 python -m life_system.main summary today
 python -m life_system.main summary day --date 2026-03-07
+python -m life_system.main summary week --date 2026-03-10
+python -m life_system.main summary month --date 2026-03-10
+python -m life_system.main summary quarter --date 2026-03-10
+python -m life_system.main summary year --date 2026-03-10
 
 # User Telegram
 python -m life_system.main user set-telegram xiaoyu 123456789
@@ -112,7 +116,7 @@ python -m life_system.main user clear-telegram xiaoyu
 
 ## Summary Output
 
-- `summary today` / `summary day` output is Chinese by default.
+- `summary today` / `summary day` / `summary week` / `summary month` / `summary quarter` / `summary year` output is Chinese by default.
 - Summary day boundaries are hardcoded to Asia/Shanghai (鍖椾含鏃堕棿).
 - Summary timestamps in highlights are displayed in Beijing time.
 - Summary is evidence-first and user-scoped.
@@ -497,3 +501,15 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now life-encouragement.timer
 sudo systemctl status life-encouragement.timer
 ```
+
+
+
+
+## Web Anki Share Review Link
+
+- Service API:
+  - `create_anki_review_share_link(base_url, ttl_minutes=120, max_uses=1)`
+  - `consume_anki_review_share_token(token)`
+- Share entry route: `GET /share/anki-review?t=...`
+- On successful token validation, web session grants `/anki/review` access for 120 minutes.
+- Share session does not unlock other pages (for example `/tasks`, `/inbox`).
