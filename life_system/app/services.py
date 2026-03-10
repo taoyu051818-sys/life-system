@@ -478,6 +478,11 @@ class _LegacyLifeSystemService:
         return reminder_id
 
     def due_reminders(self, now: str | None = None, limit: int = 50, send: bool = False) -> list[dict[str, Any]]:
+        # delegated_to=ReminderService.due_reminders
+        # fallback_reason=legacy_direct_instantiation_compat
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            return reminder_service.due_reminders(now=now, limit=limit, send=send)
         pivot_iso = now or now_utc_iso()
         pivot_dt = self._parse_iso(pivot_iso)
         candidates = self.reminder_repo.list_due_candidates(user_id=self.user_id, limit=limit * 5)
@@ -498,7 +503,6 @@ class _LegacyLifeSystemService:
 
         result = self.send_due_reminders(now=now, limit=limit)
         return result["items"]
-
     def send_due_reminders(self, now: str | None = None, limit: int = 50) -> dict[str, Any]:
         pivot_iso = now or now_utc_iso()
         pivot_dt = self._parse_iso(pivot_iso)
@@ -1661,9 +1665,27 @@ class ReminderService:
         self.event_logger.log("reminder_created", {"reminder_id": reminder_id, "task_id": task_id})
         return reminder_id
 
-    def due_reminders(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return self._legacy.due_reminders(*args, **kwargs)
+    def due_reminders(self, now: str | None = None, limit: int = 50, send: bool = False) -> list[dict[str, Any]]:
+        pivot_iso = now or now_utc_iso()
+        pivot_dt = self._parse_iso(pivot_iso)
+        candidates = self.reminder_repo.list_due_candidates(user_id=self.user_id, limit=limit * 5)
+        due: list[dict[str, Any]] = []
+        for item in candidates:
+            is_due, parse_error = self._is_due_with_error(item, pivot_dt)
+            if parse_error:
+                if send:
+                    self.reminder_repo.mark_failed(item["id"], reason=parse_error)
+                    self._log_reminder_event(item["id"], "failed", {"reason": parse_error})
+                continue
+            if is_due:
+                due.append(item)
+        due = due[:limit]
+        if not send:
+            self.event_logger.log("reminder_due_checked", {"now": pivot_iso, "count": len(due)})
+            return due
 
+        result = self.send_due_reminders(now=now, limit=limit)
+        return result["items"]
     def send_due_reminders(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         return self._legacy.send_due_reminders(*args, **kwargs)
 
@@ -1718,6 +1740,29 @@ class ReminderService:
         if item is None:
             return None
         return self.reminder_event_repo.list_for_user(user_id=self.user_id, reminder_id=reminder_id)
+
+    def _is_due_with_error(self, item: dict[str, Any], now_dt: datetime) -> tuple[bool, str | None]:
+        status = item["status"]
+        try:
+            if status in ("pending", "snoozed"):
+                return self._parse_iso(item["remind_at"]) <= now_dt, None
+
+            if status == "sent":
+                if not bool(item.get("requires_ack")):
+                    return False, None
+                if item.get("ack_at"):
+                    return False, None
+                next_retry = item.get("next_retry_at")
+                if not next_retry:
+                    return False, None
+                return self._parse_iso(next_retry) <= now_dt, None
+        except ValueError:
+            return False, "invalid_datetime_in_reminder"
+
+        return False, None
+
+    def _parse_iso(self, value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
     def _log_reminder_event(self, reminder_id: int, event_type: str, payload: dict[str, Any]) -> None:
         self.reminder_event_repo.create(
