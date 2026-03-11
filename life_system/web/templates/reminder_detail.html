@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Reminder Detail | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Reminder Detail</h1>
+    <div class="actions-row">
+      <a class="btn small ghost" href="/reminders">All</a>
+      <a class="btn small ghost" href="/reminders/pending-ack">Pending Ack</a>
+      <a class="btn small ghost" href="/reminders/{{ reminder.id }}/history">History</a>
+    </div>
+  </div>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  <div class="detail-grid">
+    <div><span class="label">id</span><span>{{ reminder.id }}</span></div>
+    <div><span class="label">task</span><span>{{ reminder.task_title }} (#{{ reminder.task_id }})</span></div>
+    <div><span class="label">status</span><span>{{ reminder.status }}</span></div>
+    <div><span class="label">channel</span><span>{{ reminder.channel }}</span></div>
+    <div><span class="label">remind_at</span><span>{{ reminder.remind_at | bj_time }}</span></div>
+    <div><span class="label">created_at</span><span>{{ reminder.created_at | bj_time }}</span></div>
+    <div><span class="label">last_attempt_at</span><span>{{ reminder.last_attempt_at | bj_time }}</span></div>
+    <div><span class="label">next_retry_at</span><span>{{ reminder.next_retry_at | bj_time }}</span></div>
+    <div><span class="label">ack_at</span><span>{{ reminder.ack_at | bj_time }}</span></div>
+    <div><span class="label">acked_via</span><span>{{ reminder.acked_via or '-' }}</span></div>
+    <div><span class="label">skip_reason</span><span>{{ reminder.skip_reason or '-' }}</span></div>
+    <div><span class="label">message_ref</span><span>{{ reminder.message_ref or '-' }}</span></div>
+  </div>
+
+  <div class="actions-row wrap">
+    <form method="post" action="/reminders/{{ reminder.id }}/ack">
+      <button class="btn small" type="submit">Ack</button>
+    </form>
+    <form class="inline-form" method="post" action="/reminders/{{ reminder.id }}/snooze">
+      <input name="remind_at" placeholder="2026-03-08T09:00:00+08:00" />
+      <button class="btn small secondary" type="submit">Snooze</button>
+    </form>
+    <form method="post" action="/reminders/{{ reminder.id }}/skip">
+      <button class="btn small ghost" type="submit">Skip</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

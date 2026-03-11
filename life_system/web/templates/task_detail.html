@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Task Detail | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Task Detail</h1>
+    <a class="btn small ghost" href="/tasks">Back to Tasks</a>
+  </div>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  {% if not task %}
+  <div class="muted">task not found</div>
+  {% else %}
+  <div class="detail-grid">
+    <div><span class="label">id</span><span>{{ task.id }}</span></div>
+    <div><span class="label">title</span><span>{{ task.title }}</span></div>
+    <div><span class="label">status</span><span>{{ task.status }}</span></div>
+    <div><span class="label">priority</span><span>{{ task.priority }}</span></div>
+    <div><span class="label">created_at</span><span>{{ task.created_at | bj_time }}</span></div>
+    <div><span class="label">updated_at</span><span>{{ task.updated_at | bj_time }}</span></div>
+    <div><span class="label">due_at</span><span>{{ task.due_at | bj_time }}</span></div>
+    <div><span class="label">snooze_until</span><span>{{ task.snooze_until | bj_time }}</span></div>
+  </div>
+  <div class="detail-notes">
+    <span class="label">notes</span>
+    <div>{{ task.notes or '-' }}</div>
+  </div>
+
+  <div class="actions-row wrap">
+    <form method="post" action="/tasks/{{ task.id }}/done">
+      <button class="btn small" type="submit">Done</button>
+    </form>
+    <form class="inline-form" method="post" action="/tasks/{{ task.id }}/snooze">
+      <input name="snooze_until" placeholder="2026-03-08T09:00:00+08:00" />
+      <button class="btn small secondary" type="submit">Snooze</button>
+    </form>
+  </div>
+
+  <section class="card nested">
+    <h3>Abandon Task</h3>
+    <form class="stack-form" method="post" action="/tasks/{{ task.id }}/abandon">
+      <label for="reason_code">reason_code</label>
+      <select id="reason_code" name="reason_code">
+        <option value="">-</option>
+        <option value="overwhelm">overwhelm</option>
+        <option value="wrong_timing">wrong_timing</option>
+        <option value="no_value">no_value</option>
+        <option value="impulse">impulse</option>
+        <option value="blocked">blocked</option>
+      </select>
+      <label for="reason">reason</label>
+      <input id="reason" name="reason" placeholder="optional text" />
+      <button class="btn small ghost" type="submit">Abandon</button>
+    </form>
+  </section>
+
+  <section class="card nested">
+    <h3>Create Reminder</h3>
+    <form class="stack-form" method="post" action="/tasks/{{ task.id }}/reminders">
+      <label for="remind_at">remind_at (ISO)</label>
+      <input id="remind_at" name="remind_at" required placeholder="2026-03-08T09:00:00+08:00" />
+      <label for="channel">channel</label>
+      <input id="channel" name="channel" value="web" />
+      <button class="btn small" type="submit">Create Reminder</button>
+    </form>
+  </section>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,4 +1,4 @@
-import json
+﻿import json
 import os
 import tempfile
 from pathlib import Path
@@ -546,3 +546,133 @@ def test_anki_stats_nav_not_highlight_anki_tab() -> None:
         assert page.status_code == 200
         assert 'href="/anki/stats">Anki Stats</a>' in page.text
         assert '<a class="active" href="/anki">Anki</a>' not in page.text
+
+
+def test_inbox_to_anki_action_creates_draft() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "--user", "xiaoyu", "capture", "turn into anki"])
+        client = _build_client(db_path)
+        _login(client)
+
+        resp = client.post("/inbox/1/to-anki", follow_redirects=False)
+        assert resp.status_code == 303
+        assert resp.headers["location"].startswith("/inbox?")
+
+        with connection_ctx(db_path) as conn:
+            draft = conn.execute("SELECT front, source_type FROM anki_drafts WHERE id=1").fetchone()
+            inbox = conn.execute("SELECT status FROM inbox_items WHERE id=1").fetchone()
+            assert draft["front"] == "turn into anki"
+            assert draft["source_type"] == "inbox"
+            assert inbox["status"] == "triaged"
+
+
+def test_tasks_new_create_and_abandon_flow() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/tasks/new")
+        assert page.status_code == 200
+        assert "Create Task" in page.text
+
+        create_resp = client.post(
+            "/tasks",
+            data={"title": "web created task", "notes": "n1", "priority": "2"},
+            follow_redirects=False,
+        )
+        assert create_resp.status_code == 303
+        assert create_resp.headers["location"].startswith("/tasks/1?")
+
+        abandon_resp = client.post(
+            "/tasks/1/abandon",
+            data={"reason_code": "overwhelm", "reason": "too much"},
+            follow_redirects=False,
+        )
+        assert abandon_resp.status_code == 303
+
+        with connection_ctx(db_path) as conn:
+            task = conn.execute("SELECT status FROM tasks WHERE id=1").fetchone()
+            log = conn.execute(
+                "SELECT reason_code, reason_text FROM abandonment_logs WHERE task_id=1 ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert task["status"] == "abandoned"
+            assert log["reason_code"] == "overwhelm"
+            assert log["reason_text"] == "too much"
+
+
+def test_task_detail_create_reminder_and_reminder_pages() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "task", "create", "task for reminder"])
+        client = _build_client(db_path)
+        _login(client)
+
+        detail = client.get("/tasks/1")
+        assert detail.status_code == 200
+        assert "task for reminder" in detail.text
+
+        create = client.post(
+            "/tasks/1/reminders",
+            data={"remind_at": "2026-03-08T12:00:00+00:00", "channel": "web"},
+            follow_redirects=False,
+        )
+        assert create.status_code == 303
+
+        reminder_detail = client.get("/reminders/1")
+        assert reminder_detail.status_code == 200
+        assert "task for reminder" in reminder_detail.text
+
+        history = client.get("/reminders/1/history")
+        assert history.status_code == 200
+        assert "created" in history.text
+
+
+def test_reminders_pending_ack_page() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "task", "create", "pending ack task"])
+        run_cli(["--db", str(db_path), "reminder", "create", "1", "2026-03-08T00:00:00+00:00"])
+        run_cli(["--db", str(db_path), "reminder", "due", "--send", "--now", "2026-03-08T00:00:00+00:00"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/reminders/pending-ack")
+        assert page.status_code == 200
+        assert "pending ack task" in page.text
+
+
+def test_anki_detail_page_show() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "anki", "create", "manual", "Q detail", "A detail", "--deck-name", "default"])
+        client = _build_client(db_path)
+        _login(client)
+
+        page = client.get("/anki/1")
+        assert page.status_code == 200
+        assert "Q detail" in page.text
+        assert "A detail" in page.text
+
+
+def test_inbox_review_and_triage_history_pages() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "life.db"
+        run_cli(["--db", str(db_path), "init-db"])
+        run_cli(["--db", str(db_path), "--user", "xiaoyu", "capture", "review me"])
+        run_cli(["--db", str(db_path), "--user", "xiaoyu", "inbox", "triage", "1", "task"])
+        client = _build_client(db_path)
+        _login(client)
+
+        review_page = client.get("/inbox/review")
+        assert review_page.status_code == 200
+
+        history_page = client.get("/inbox/triage-history")
+        assert history_page.status_code == 200
+        assert "to_task" in history_page.text

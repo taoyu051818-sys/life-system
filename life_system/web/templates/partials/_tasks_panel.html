@@ -17,12 +17,14 @@
           <td>{{ t.due_at | bj_time }}</td>
           <td>{{ t.snooze_until | bj_time }}</td>
           <td>
-            <button class="btn small ghost" hx-get="/tasks/{{ t.id }}" hx-target="#task-detail-{{ t.id }}" hx-swap="innerHTML">详情</button>
+            <a class="btn small ghost" href="/tasks/{{ t.id }}">详情页</a>
+            <button class="btn small ghost" hx-get="/tasks/{{ t.id }}" hx-target="#task-detail-{{ t.id }}" hx-swap="innerHTML">详情片段</button>
             <button class="btn small" hx-post="/tasks/{{ t.id }}/done" hx-target="#tasks-panel" hx-swap="outerHTML">完成</button>
             <form class="inline-form" hx-post="/tasks/{{ t.id }}/snooze" hx-target="#tasks-panel" hx-swap="outerHTML">
               <input name="snooze_until" placeholder="2026-03-08T09:00:00+08:00" />
               <button class="btn small secondary" type="submit">snooze</button>
             </form>
+            <button class="btn small ghost" hx-post="/tasks/{{ t.id }}/abandon" hx-target="#tasks-panel" hx-swap="outerHTML">abandon</button>
           </td>
         </tr>
         <tr><td colspan="7"><div id="task-detail-{{ t.id }}" class="history-slot"></div></td></tr>

@@ -483,6 +483,9 @@ CLI:
 - `python -m life_system.main --user xiaoyu encouragement send`
 - `python -m life_system.main encouragement send-daily`
 
+Data scope for DeepSeek prompt:
+- Uses all journal entries of the selected day (Asia/Shanghai), no fixed 10/50 cap.
+
 Telegram:
 - New command: `/encouragement`
 - `telegram setup-menu` now includes `/encouragement`
@@ -513,3 +516,38 @@ sudo systemctl status life-encouragement.timer
 - Share entry route: `GET /share/anki-review?t=...`
 - On successful token validation, web session grants `/anki/review` access for 120 minutes.
 - Share session does not unlock other pages (for example `/tasks`, `/inbox`).
+
+## Web Workbench Additions (P0/P1)
+
+This pass adds missing high-frequency web workflows while keeping web as a thin adapter.
+
+New inbox routes:
+- `POST /inbox/{id}/to-anki`
+- `GET /inbox/review`
+- `GET /inbox/triage-history`
+
+New task routes:
+- `GET /tasks/new`
+- `POST /tasks`
+- `POST /tasks/{id}/abandon`
+- `POST /tasks/{id}/reminders`
+
+New reminder routes:
+- `GET /reminders/pending-ack`
+- `GET /reminders/{id}`
+- `GET /reminders/{id}/history`
+
+New anki route:
+- `GET /anki/{id}` (detail page)
+
+New summary route:
+- `GET /summary/today`
+
+Journal additions:
+- `GET /journal/today`
+- `GET /journal?type=<entry_type>&limit=<n>&view=cards|timeline`
+
+Notes:
+- Inbox triage web actions now support task / anki / archive / keep on both inbox list and inbox review pages.
+- Task detail page includes a minimal reminder creation form.
+- All existing business logic remains in service layer; web handlers only orchestrate request/response and rendering.

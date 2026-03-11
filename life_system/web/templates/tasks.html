@@ -1,8 +1,13 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 {% block title %}Tasks | Life System{% endblock %}
 {% block content %}
 <section class="card">
-  <h1>Tasks</h1>
+  <div class="section-head">
+    <h1>Tasks</h1>
+    <div class="actions-row">
+      <a class="btn small" href="/tasks/new">New Task</a>
+    </div>
+  </div>
   {% include "partials/_tasks_panel.html" %}
 </section>
 {% endblock %}

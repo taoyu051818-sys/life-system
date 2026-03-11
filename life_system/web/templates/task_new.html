@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}New Task | Life System{% endblock %}
+{% block content %}
+<section class="card task-form-card">
+  <div class="section-head">
+    <h1>Create Task</h1>
+    <a class="btn small ghost" href="/tasks">Back to Tasks</a>
+  </div>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+  <form class="stack-form" method="post" action="/tasks">
+    <label for="title">title</label>
+    <input id="title" name="title" required placeholder="task title" />
+
+    <label for="notes">notes</label>
+    <textarea id="notes" name="notes" rows="4" placeholder="optional"></textarea>
+
+    <div class="grid-2">
+      <div>
+        <label for="priority">priority</label>
+        <input id="priority" name="priority" type="number" min="1" max="5" value="3" />
+      </div>
+      <div>
+        <label for="due_at">due_at (ISO)</label>
+        <input id="due_at" name="due_at" placeholder="2026-03-08T09:00:00+08:00" />
+      </div>
+    </div>
+
+    <button class="btn" type="submit">Create Task</button>
+  </form>
+</section>
+{% endblock %}

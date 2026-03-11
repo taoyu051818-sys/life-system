@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Anki Detail | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Anki Draft #{{ draft.id }}</h1>
+    <div class="actions-row">
+      <a class="btn small ghost" href="/anki">Back to Anki</a>
+      <a class="btn small ghost" href="/anki/review">Review</a>
+    </div>
+  </div>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
+
+  <div class="detail-grid">
+    <div><span class="label">id</span><span>{{ draft.id }}</span></div>
+    <div><span class="label">status</span><span>{{ draft.status }}</span></div>
+    <div><span class="label">source_type</span><span>{{ draft.source_type }}</span></div>
+    <div><span class="label">source_id</span><span>{{ draft.source_id or '-' }}</span></div>
+    <div><span class="label">deck_name</span><span>{{ draft.deck_name or '-' }}</span></div>
+    <div><span class="label">tags</span><span>{{ draft.tags or '-' }}</span></div>
+    <div><span class="label">created_at</span><span>{{ draft.created_at | bj_time }}</span></div>
+    <div><span class="label">exported_at</span><span>{{ draft.exported_at | bj_time }}</span></div>
+  </div>
+
+  <section class="card nested">
+    <h3>Front</h3>
+    <div class="prelike">{{ draft.front }}</div>
+    <h3>Back</h3>
+    <div class="prelike">{{ draft.back }}</div>
+  </section>
+
+  <section class="card nested">
+    <h3>Source Trace</h3>
+    <div class="detail-grid">
+      <div><span class="label">source_inbox_item_id</span><span>{{ draft.source_inbox_item_id or '-' }}</span></div>
+      <div><span class="label">source_journal_entry_id</span><span>{{ draft.source_journal_entry_id or '-' }}</span></div>
+      <div><span class="label">source_inbox_source</span><span>{{ draft.source_inbox_source or '-' }}</span></div>
+      <div><span class="label">source_inbox_created_by</span><span>{{ draft.source_inbox_created_by or '-' }}</span></div>
+      <div><span class="label">source_inbox_rule</span><span>{{ draft.source_inbox_rule_name or '-' }}/{{ draft.source_inbox_rule_version or '-' }}</span></div>
+      <div><span class="label">source_triage_event_id</span><span>{{ draft.source_triage_event_id or '-' }}</span></div>
+    </div>
+  </section>
+
+  <section class="card nested">
+    <h3>Actions</h3>
+    <div class="actions-row wrap">
+      <form method="post" action="/anki/{{ draft.id }}/activate">
+        <button class="btn small" type="submit">Activate to Review</button>
+      </form>
+      <form method="post" action="/anki/{{ draft.id }}/archive">
+        <button class="btn small ghost" type="submit">Archive</button>
+      </form>
+    </div>
+
+    <form class="stack-form" method="post" action="/anki/{{ draft.id }}/update">
+      <label for="front">front</label>
+      <textarea id="front" name="front" rows="3">{{ draft.front }}</textarea>
+      <label for="back">back</label>
+      <textarea id="back" name="back" rows="5">{{ draft.back }}</textarea>
+      <div class="grid-2">
+        <div>
+          <label for="tags">tags</label>
+          <input id="tags" name="tags" value="{{ draft.tags or '' }}" />
+        </div>
+        <div>
+          <label for="deck_name">deck_name</label>
+          <input id="deck_name" name="deck_name" value="{{ draft.deck_name or '' }}" />
+        </div>
+      </div>
+      <button class="btn small secondary" type="submit">Update</button>
+    </form>
+  </section>
+</section>
+{% endblock %}

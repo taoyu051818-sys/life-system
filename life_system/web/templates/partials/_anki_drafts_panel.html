@@ -1,4 +1,4 @@
-<section class="card nested">
+﻿<section class="card nested">
   <h3>Drafts</h3>
   <form class="row-form" method="get" action="/anki">
     <label for="deck">deck</label>
@@ -44,6 +44,7 @@
           <td>{{ d.status }}</td>
           <td class="content">{{ d.front }}</td>
           <td>
+            <a class="btn small ghost" href="/anki/{{ d.id }}">show</a>
             <form class="stack-form compact" hx-post="/anki/{{ d.id }}/update" hx-target="#anki-panel" hx-swap="outerHTML">
               <input name="front" placeholder="front (optional)" />
               <input name="back" placeholder="back (optional)" />

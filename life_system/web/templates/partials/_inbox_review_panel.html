@@ -1,4 +1,4 @@
-﻿<div id="inbox-panel">
+﻿<div id="inbox-review-panel">
   {% if flash %}
   <div class="flash">{{ flash }}</div>
   {% endif %}
@@ -25,11 +25,11 @@
           <td>{{ item.created_by or '-' }}</td>
           <td>{{ item.rule_name or '-' }}</td>
           <td>
-            <button class="btn small" hx-post="/inbox/{{ item.id }}/to-task?view=inbox" hx-target="#inbox-panel" hx-swap="outerHTML">转任务</button>
-            <button class="btn small secondary" hx-post="/inbox/{{ item.id }}/to-anki?view=inbox" hx-target="#inbox-panel" hx-swap="outerHTML">转Anki</button>
-            <button class="btn small secondary" hx-post="/inbox/{{ item.id }}/archive?view=inbox" hx-target="#inbox-panel" hx-swap="outerHTML">归档</button>
-            <button class="btn small ghost" hx-post="/inbox/{{ item.id }}/keep?view=inbox" hx-target="#inbox-panel" hx-swap="outerHTML">先留着</button>
-            <button class="btn small ghost" hx-get="/inbox/{{ item.id }}/history?view=inbox" hx-target="#history-{{ item.id }}" hx-swap="innerHTML">查看 history</button>
+            <button class="btn small" hx-post="/inbox/{{ item.id }}/to-task?view=review" hx-target="#inbox-review-panel" hx-swap="outerHTML">转任务</button>
+            <button class="btn small secondary" hx-post="/inbox/{{ item.id }}/to-anki?view=review" hx-target="#inbox-review-panel" hx-swap="outerHTML">转Anki</button>
+            <button class="btn small secondary" hx-post="/inbox/{{ item.id }}/archive?view=review" hx-target="#inbox-review-panel" hx-swap="outerHTML">归档</button>
+            <button class="btn small ghost" hx-post="/inbox/{{ item.id }}/keep?view=review" hx-target="#inbox-review-panel" hx-swap="outerHTML">先留着</button>
+            <button class="btn small ghost" hx-get="/inbox/{{ item.id }}/history?view=review" hx-target="#history-{{ item.id }}" hx-swap="innerHTML">查看 history</button>
           </td>
         </tr>
         <tr>

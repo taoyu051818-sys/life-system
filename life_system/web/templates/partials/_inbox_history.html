@@ -1,4 +1,9 @@
 ﻿{% if rows %}
+<div class="actions-row wrap compact-actions">
+  <button class="btn small" hx-post="/inbox/{{ inbox_id }}/to-task?view={{ view }}" hx-target="#{{ 'inbox-review-panel' if view == 'review' else 'inbox-panel' }}" hx-swap="outerHTML">转任务</button>
+  <button class="btn small secondary" hx-post="/inbox/{{ inbox_id }}/to-anki?view={{ view }}" hx-target="#{{ 'inbox-review-panel' if view == 'review' else 'inbox-panel' }}" hx-swap="outerHTML">转Anki</button>
+  <button class="btn small ghost" hx-post="/inbox/{{ inbox_id }}/archive?view={{ view }}" hx-target="#{{ 'inbox-review-panel' if view == 'review' else 'inbox-panel' }}" hx-swap="outerHTML">归档</button>
+</div>
 <div class="history">
   {% for row in rows %}
   <div class="history-item">

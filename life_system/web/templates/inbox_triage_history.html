@@ -1,0 +1,45 @@
+﻿{% extends "base.html" %}
+{% block title %}Inbox Triage History | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Inbox Triage History</h1>
+    <form class="row-form" method="get" action="/inbox/triage-history">
+      <label for="limit">limit</label>
+      <input id="limit" name="limit" type="number" min="1" max="500" value="{{ limit }}" />
+      <button class="btn small secondary" type="submit">Apply</button>
+      <a class="btn small ghost" href="/inbox/review">Back to Review</a>
+    </form>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>inbox_id</th>
+          <th>action</th>
+          <th>target</th>
+          <th>created_by</th>
+          <th>rule</th>
+          <th>created_at(北京)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>{{ row.inbox_item_id }}</td>
+          <td>{{ row.action }}</td>
+          <td>{{ row.target_type or '-' }}#{{ row.target_id or '-' }}</td>
+          <td>{{ row.created_by or '-' }}</td>
+          <td>{{ row.source_rule_name or '-' }}/{{ row.source_rule_version or '-' }}</td>
+          <td>{{ row.created_at | bj_time }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="muted">no triage history</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

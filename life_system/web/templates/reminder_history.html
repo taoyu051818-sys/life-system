@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Reminder History | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Reminder History #{{ reminder.id }}</h1>
+    <div class="actions-row">
+      <a class="btn small ghost" href="/reminders/{{ reminder.id }}">Back to Detail</a>
+    </div>
+  </div>
+  <p class="muted">task={{ reminder.task_title }} (#{{ reminder.task_id }})</p>
+
+  <div class="history">
+    {% for row in rows %}
+    <div class="history-item">
+      <span>#{{ row.id }}</span>
+      <span>{{ row.event_at | bj_time }}</span>
+      <span>{{ row.event_type }}</span>
+      <span>{{ row.payload or '-' }}</span>
+    </div>
+    {% else %}
+    <div class="muted">no reminder history</div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}

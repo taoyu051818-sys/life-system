@@ -1,9 +1,98 @@
-﻿{% extends "base.html" %}
-{% block title %}首页 | Life System{% endblock %}
+{% extends "base.html" %}
+{% block title %}Dashboard | Life System{% endblock %}
 {% block content %}
 <section class="card">
-  <h1>PC Web UI 最小骨架</h1>
-  <p>当前阶段：Phase 2（最小登录 + Quick Journal）。</p>
+  <div class="section-head">
+    <h1>Today Dashboard</h1>
+    <a class="btn small ghost" href="/summary/today">Summary Today</a>
+  </div>
+  {% if flash %}<div class="flash">{{ flash }}</div>{% endif %}
   {% include "partials/_quick_journal_panel.html" %}
+</section>
+
+<section class="dashboard-grid">
+  <article class="card nested">
+    <div class="section-head">
+      <h3>Open Tasks</h3>
+      <a class="btn small ghost" href="/tasks">view all</a>
+    </div>
+    <ul class="compact-list">
+      {% for t in open_tasks %}
+      <li>#{{ t.id }} {{ t.title }} <span class="muted">{{ t.status }}</span></li>
+      {% else %}
+      <li class="muted">no open tasks</li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card nested">
+    <div class="section-head">
+      <h3>Inbox (new)</h3>
+      <a class="btn small ghost" href="/inbox/review">review</a>
+    </div>
+    <ul class="compact-list">
+      {% for item in inbox_items %}
+      <li>#{{ item.id }} {{ item.content }}</li>
+      {% else %}
+      <li class="muted">no new inbox</li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card nested">
+    <div class="section-head">
+      <h3>Pending Ack Reminders</h3>
+      <a class="btn small ghost" href="/reminders/pending-ack">handle</a>
+    </div>
+    <ul class="compact-list">
+      {% for r in pending_ack %}
+      <li>#{{ r.id }} {{ r.task_title }} <span class="muted">{{ r.remind_at | bj_time }}</span></li>
+      {% else %}
+      <li class="muted">no pending ack reminders</li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card nested">
+    <div class="section-head">
+      <h3>Due Anki Reviews</h3>
+      <a class="btn small ghost" href="/anki/review">review</a>
+    </div>
+    <ul class="compact-list">
+      {% for c in due_cards %}
+      <li>#{{ c.id }} {{ c.front }}</li>
+      {% else %}
+      <li class="muted">no due cards</li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card nested">
+    <div class="section-head">
+      <h3>Journal Today</h3>
+      <a class="btn small ghost" href="/journal/today">view</a>
+    </div>
+    <ul class="compact-list">
+      {% for j in journal_today %}
+      <li>#{{ j.id }} [{{ j.entry_type }}] {{ j.content }}</li>
+      {% else %}
+      <li class="muted">no today journal</li>
+      {% endfor %}
+    </ul>
+  </article>
+
+  <article class="card nested">
+    <div class="section-head">
+      <h3>Summary Snapshot</h3>
+      <a class="btn small ghost" href="/summary/today">details</a>
+    </div>
+    <div class="detail-grid compact">
+      <div><span class="label">tasks_done</span><span>{{ summary.overview.tasks_done }}</span></div>
+      <div><span class="label">tasks_created</span><span>{{ summary.overview.tasks_created }}</span></div>
+      <div><span class="label">inbox_triaged</span><span>{{ summary.overview.inbox_triaged }}</span></div>
+      <div><span class="label">pending_ack</span><span>{{ summary.open_loops.pending_ack }}</span></div>
+    </div>
+    <p class="muted">{{ summary.note }}</p>
+  </article>
 </section>
 {% endblock %}

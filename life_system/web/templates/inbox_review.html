@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Inbox Review | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Inbox Review</h1>
+    <div class="actions-row">
+      <a class="btn small ghost" href="/inbox">Back to Inbox</a>
+      <a class="btn small ghost" href="/inbox/triage-history">Triage History</a>
+    </div>
+  </div>
+  <p class="muted">oldest first, quick triage workspace</p>
+  {% include "partials/_inbox_review_panel.html" %}
+</section>
+{% endblock %}

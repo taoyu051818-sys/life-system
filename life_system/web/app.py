@@ -4,7 +4,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -98,6 +98,62 @@ def create_app(db_path: str | None = None) -> FastAPI:
             return None
         return _build_user_service_by_id(conn, share_user_id)
 
+    def _inbox_items_for_view(service: LifeSystemService, view: str, limit: int = 200) -> list[dict[str, Any]]:
+        if view == "review":
+            return service.list_new_inbox_oldest(limit=limit)
+        return _list_inbox_new_desc(service)
+
+    def _render_inbox_panel(
+        request: Request,
+        service: LifeSystemService,
+        *,
+        flash: str,
+        view: str,
+        limit: int = 200,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        items = _inbox_items_for_view(service, view=view, limit=limit)
+        template = "partials/_inbox_review_panel.html" if view == "review" else "partials/_inbox_panel.html"
+        return templates.TemplateResponse(
+            request,
+            template,
+            {
+                "request": request,
+                "active_user": active_username,
+                "items": items,
+                "flash": flash,
+                "view": view,
+            },
+            status_code=status_code,
+        )
+
+    def _reminders_for_view(service: LifeSystemService, view: str, limit: int = 200) -> list[dict[str, Any]]:
+        if view == "pending_ack":
+            return service.list_pending_ack_reminders(limit=limit)
+        return service.list_reminders(limit=limit)
+
+    def _render_reminders_panel(
+        request: Request,
+        service: LifeSystemService,
+        *,
+        flash: str,
+        view: str,
+        limit: int = 200,
+        status_code: int = 200,
+    ) -> HTMLResponse:
+        reminders = _reminders_for_view(service, view=view, limit=limit)
+        return templates.TemplateResponse(
+            request,
+            "partials/_reminders_panel.html",
+            {
+                "request": request,
+                "active_user": active_username,
+                "reminders": reminders,
+                "flash": flash,
+                "view": view,
+            },
+            status_code=status_code,
+        )
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -133,10 +189,38 @@ def create_app(db_path: str | None = None) -> FastAPI:
     def home(request: Request) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            open_tasks = service.list_tasks(status="open", limit=8)
+            inbox_items = service.list_new_inbox_oldest(limit=8)
+            pending_ack = service.list_pending_ack_reminders(limit=8)
+            due_cards = service.list_due_anki_cards(limit=8)
+            journal_today = service.today_journal(limit=6)
+            summary = service.build_today_summary()
         ctx = _base_ctx(request)
-        ctx.update({"flash": None})
+        ctx.update(
+            {
+                "flash": _none_if_blank(request.query_params.get("flash")),
+                "open_tasks": open_tasks,
+                "inbox_items": inbox_items,
+                "pending_ack": pending_ack,
+                "due_cards": due_cards,
+                "journal_today": journal_today,
+                "summary": summary,
+            }
+        )
         return templates.TemplateResponse(request, "index.html", ctx)
 
+    @app.get("/summary/today", response_class=HTMLResponse)
+    def summary_today_page(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            summary = service.build_today_summary()
+        ctx = _base_ctx(request)
+        ctx.update({"summary": summary})
+        return templates.TemplateResponse(request, "summary_today.html", ctx)
     @app.post("/quick-journal/activity", response_class=HTMLResponse)
     async def quick_journal_activity(request: Request) -> HTMLResponse:
         return await _create_quick_journal(request, current_db_path, active_username, "activity", "activity saved")
@@ -176,15 +260,53 @@ def create_app(db_path: str | None = None) -> FastAPI:
         request: Request,
         limit: int = Query(50, ge=1, le=500),
         view: str = Query("cards"),
+        entry_type: str | None = Query(None, alias="type"),
     ) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
         view_mode = "timeline" if view == "timeline" else "cards"
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
-            rows = service.list_journal(limit=limit)
+            rows = service.list_journal(limit=limit, entry_type=_none_if_blank(entry_type))
         ctx = _base_ctx(request)
-        ctx.update({"rows": rows, "limit": limit, "view_mode": view_mode})
+        ctx.update(
+            {
+                "rows": rows,
+                "limit": limit,
+                "view_mode": view_mode,
+                "entry_type": _none_if_blank(entry_type),
+                "scope": "all",
+                "title": "Journal",
+                "subtitle": "history",
+            }
+        )
+        return templates.TemplateResponse(request, "journal.html", ctx)
+
+    @app.get("/journal/today", response_class=HTMLResponse)
+    def journal_today_page(
+        request: Request,
+        limit: int = Query(50, ge=1, le=500),
+        view: str = Query("cards"),
+        entry_type: str | None = Query(None, alias="type"),
+    ) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        view_mode = "timeline" if view == "timeline" else "cards"
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            rows = service.today_journal(limit=limit, entry_type=_none_if_blank(entry_type))
+        ctx = _base_ctx(request)
+        ctx.update(
+            {
+                "rows": rows,
+                "limit": limit,
+                "view_mode": view_mode,
+                "entry_type": _none_if_blank(entry_type),
+                "scope": "today",
+                "title": "Journal Today",
+                "subtitle": "today view",
+            }
+        )
         return templates.TemplateResponse(request, "journal.html", ctx)
 
     @app.get("/inbox", response_class=HTMLResponse)
@@ -195,13 +317,43 @@ def create_app(db_path: str | None = None) -> FastAPI:
             service = _build_user_service(conn, active_username)
             items = _list_inbox_new_desc(service)
         ctx = _base_ctx(request)
-        ctx.update({"items": items, "flash": None})
+        ctx.update({"items": items, "flash": _none_if_blank(request.query_params.get("flash")), "view": "inbox"})
         return templates.TemplateResponse(request, "inbox.html", ctx)
 
-    @app.post("/inbox/{inbox_id}/to-task", response_class=HTMLResponse)
-    def inbox_to_task(request: Request, inbox_id: int) -> HTMLResponse:
+    @app.get("/inbox/review", response_class=HTMLResponse)
+    def inbox_review_page(request: Request, limit: int = Query(50, ge=1, le=500)) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            items = service.list_new_inbox_oldest(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update(
+            {
+                "items": items,
+                "flash": _none_if_blank(request.query_params.get("flash")),
+                "view": "review",
+                "limit": limit,
+            }
+        )
+        return templates.TemplateResponse(request, "inbox_review.html", ctx)
+
+    @app.get("/inbox/triage-history", response_class=HTMLResponse)
+    def inbox_triage_history_page(request: Request, limit: int = Query(50, ge=1, le=500)) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            rows = service.triage_history(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update({"rows": rows, "limit": limit})
+        return templates.TemplateResponse(request, "inbox_triage_history.html", ctx)
+
+    @app.post("/inbox/{inbox_id}/to-task", response_class=HTMLResponse)
+    def inbox_to_task(request: Request, inbox_id: int, view: str = Query("inbox")) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        page_view = "review" if view == "review" else "inbox"
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             triage_status = service.inbox_triage_status(inbox_id)
@@ -214,13 +366,38 @@ def create_app(db_path: str | None = None) -> FastAPI:
             else:
                 task_id = service.triage_inbox_to_task(inbox_id)
                 flash = f"task created from inbox={inbox_id}, task={task_id}" if task_id is not None else "task create failed"
-            items = _list_inbox_new_desc(service)
-        return templates.TemplateResponse(request, "partials/_inbox_panel.html", {"request": request, "active_user": active_username, "items": items, "flash": flash})
+            if _is_htmx_request(request):
+                return _render_inbox_panel(request, service, flash=flash, view=page_view)
+        target = "/inbox/review" if page_view == "review" else "/inbox"
+        return _redirect_with_flash(target, flash)
 
-    @app.post("/inbox/{inbox_id}/archive", response_class=HTMLResponse)
-    def inbox_archive(request: Request, inbox_id: int) -> HTMLResponse:
+    @app.post("/inbox/{inbox_id}/to-anki", response_class=HTMLResponse)
+    def inbox_to_anki(request: Request, inbox_id: int, view: str = Query("inbox")) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        page_view = "review" if view == "review" else "inbox"
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            triage_status = service.inbox_triage_status(inbox_id)
+            if triage_status == "not_found":
+                flash = f"inbox not found: {inbox_id}"
+            elif triage_status == "already_archived":
+                flash = "inbox already archived"
+            elif triage_status == "already_triaged":
+                flash = "inbox already triaged"
+            else:
+                draft_id = service.triage_inbox_to_anki(inbox_id)
+                flash = f"anki draft created from inbox={inbox_id}, draft={draft_id}" if draft_id is not None else "anki draft create failed"
+            if _is_htmx_request(request):
+                return _render_inbox_panel(request, service, flash=flash, view=page_view)
+        target = "/inbox/review" if page_view == "review" else "/inbox"
+        return _redirect_with_flash(target, flash)
+
+    @app.post("/inbox/{inbox_id}/archive", response_class=HTMLResponse)
+    def inbox_archive(request: Request, inbox_id: int, view: str = Query("inbox")) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        page_view = "review" if view == "review" else "inbox"
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             status = service.archive_inbox(inbox_id)
@@ -232,19 +409,24 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 flash = "inbox already triaged"
             else:
                 flash = f"inbox not found: {inbox_id}"
-            items = _list_inbox_new_desc(service)
-        return templates.TemplateResponse(request, "partials/_inbox_panel.html", {"request": request, "active_user": active_username, "items": items, "flash": flash})
+            if _is_htmx_request(request):
+                return _render_inbox_panel(request, service, flash=flash, view=page_view)
+        target = "/inbox/review" if page_view == "review" else "/inbox"
+        return _redirect_with_flash(target, flash)
 
     @app.post("/inbox/{inbox_id}/keep", response_class=HTMLResponse)
-    def inbox_keep(request: Request, inbox_id: int) -> HTMLResponse:
+    def inbox_keep(request: Request, inbox_id: int, view: str = Query("inbox")) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        page_view = "review" if view == "review" else "inbox"
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             item = next((x for x in service.list_inbox(status="new", limit=200) if int(x["id"]) == inbox_id), None)
             flash = "keep in inbox" if item is not None else f"inbox not found: {inbox_id}"
-            items = _list_inbox_new_desc(service)
-        return templates.TemplateResponse(request, "partials/_inbox_panel.html", {"request": request, "active_user": active_username, "items": items, "flash": flash})
+            if _is_htmx_request(request):
+                return _render_inbox_panel(request, service, flash=flash, view=page_view)
+        target = "/inbox/review" if page_view == "review" else "/inbox"
+        return _redirect_with_flash(target, flash)
 
     @app.get("/inbox/{inbox_id}/history", response_class=HTMLResponse)
     def inbox_history(request: Request, inbox_id: int) -> HTMLResponse:
@@ -254,7 +436,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             service = _build_user_service(conn, active_username)
             rows = service.inbox_history(inbox_id) or []
         ctx = _base_ctx(request)
-        ctx.update({"rows": rows, "inbox_id": inbox_id})
+        ctx.update({"rows": rows, "inbox_id": inbox_id, "view": _none_if_blank(request.query_params.get("view")) or "inbox"})
         return templates.TemplateResponse(request, "partials/_inbox_history.html", ctx)
 
     @app.get("/tasks", response_class=HTMLResponse)
@@ -265,8 +447,46 @@ def create_app(db_path: str | None = None) -> FastAPI:
             service = _build_user_service(conn, active_username)
             tasks = service.list_tasks(limit=200)
         ctx = _base_ctx(request)
-        ctx.update({"tasks": tasks, "flash": None})
+        ctx.update({"tasks": tasks, "flash": _none_if_blank(request.query_params.get("flash"))})
         return templates.TemplateResponse(request, "tasks.html", ctx)
+
+    @app.get("/tasks/new", response_class=HTMLResponse)
+    def tasks_new_page(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        ctx = _base_ctx(request)
+        ctx.update({"flash": _none_if_blank(request.query_params.get("flash"))})
+        return templates.TemplateResponse(request, "task_new.html", ctx)
+
+    @app.post("/tasks", response_class=HTMLResponse)
+    async def task_create(request: Request) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        title = (form.get("title") or "").strip()
+        notes = _none_if_blank(form.get("notes"))
+        due_at = _none_if_blank(form.get("due_at"))
+        priority_raw = (form.get("priority") or "3").strip()
+        try:
+            priority = int(priority_raw)
+        except ValueError:
+            priority = 3
+        if not title:
+            ctx = _base_ctx(request)
+            ctx.update({"flash": "title is required"})
+            return templates.TemplateResponse(request, "task_new.html", ctx, status_code=400)
+        if due_at and not _is_iso_aware(due_at):
+            ctx = _base_ctx(request)
+            ctx.update({"flash": "invalid ISO datetime"})
+            return templates.TemplateResponse(request, "task_new.html", ctx, status_code=400)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            task_id = service.create_task(title=title, notes=notes, priority=priority, due_at=due_at)
+        if task_id is None:
+            ctx = _base_ctx(request)
+            ctx.update({"flash": "task create failed"})
+            return templates.TemplateResponse(request, "task_new.html", ctx, status_code=400)
+        return _redirect_with_flash(f"/tasks/{task_id}", "task created")
 
     @app.get("/tasks/{task_id}", response_class=HTMLResponse)
     def task_detail(request: Request, task_id: int) -> HTMLResponse:
@@ -275,7 +495,11 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             task = service.get_task_detail(task_id)
-        return templates.TemplateResponse(request, "partials/_task_detail.html", {"request": request, "task": task})
+        if _is_htmx_request(request):
+            return templates.TemplateResponse(request, "partials/_task_detail.html", {"request": request, "task": task})
+        ctx = _base_ctx(request)
+        ctx.update({"task": task, "flash": _none_if_blank(request.query_params.get("flash"))})
+        return templates.TemplateResponse(request, "task_detail.html", ctx)
 
     @app.post("/tasks/{task_id}/done", response_class=HTMLResponse)
     def task_done(request: Request, task_id: int) -> HTMLResponse:
@@ -285,8 +509,10 @@ def create_app(db_path: str | None = None) -> FastAPI:
             service = _build_user_service(conn, active_username)
             ok = service.done_task(task_id)
             flash = f"task done: {task_id}" if ok else f"task not found: {task_id}"
-            tasks = service.list_tasks(limit=200)
-        return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": flash})
+            if _is_htmx_request(request):
+                tasks = service.list_tasks(limit=200)
+                return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": flash})
+        return _redirect_with_flash(f"/tasks/{task_id}", flash)
 
     @app.post("/tasks/{task_id}/snooze", response_class=HTMLResponse)
     async def task_snooze(request: Request, task_id: int) -> HTMLResponse:
@@ -297,58 +523,142 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             if not _is_iso_aware(snooze_until):
-                tasks = service.list_tasks(limit=200)
-                return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": "invalid ISO datetime"}, status_code=400)
+                if _is_htmx_request(request):
+                    tasks = service.list_tasks(limit=200)
+                    return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": "invalid ISO datetime"}, status_code=400)
+                return _redirect_with_flash(f"/tasks/{task_id}", "invalid ISO datetime")
             ok = service.snooze_task(task_id, snooze_until)
             flash = f"task snoozed: {task_id}" if ok else f"task not found: {task_id}"
-            tasks = service.list_tasks(limit=200)
-        return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": flash})
+            if _is_htmx_request(request):
+                tasks = service.list_tasks(limit=200)
+                return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": flash})
+        return _redirect_with_flash(f"/tasks/{task_id}", flash)
 
-    @app.get("/reminders", response_class=HTMLResponse)
-    def reminders_page(request: Request) -> HTMLResponse:
+    @app.post("/tasks/{task_id}/abandon", response_class=HTMLResponse)
+    async def task_abandon(request: Request, task_id: int) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        reason_code = _none_if_blank(form.get("reason_code"))
+        reason_text = _none_if_blank(form.get("reason"))
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
-            reminders = service.list_reminders(limit=200)
-        ctx = _base_ctx(request)
-        ctx.update({"reminders": reminders, "flash": None})
-        return templates.TemplateResponse(request, "reminders.html", ctx)
+            ok = service.abandon_task(task_id=task_id, reason_code=reason_code, reason_text=reason_text)
+            flash = f"task abandoned: {task_id}" if ok else f"task not found: {task_id}"
+            if _is_htmx_request(request):
+                tasks = service.list_tasks(limit=200)
+                return templates.TemplateResponse(request, "partials/_tasks_panel.html", {"request": request, "tasks": tasks, "flash": flash})
+        return _redirect_with_flash(f"/tasks/{task_id}", flash)
 
-    @app.post("/reminders/{reminder_id}/ack", response_class=HTMLResponse)
-    def reminder_ack(request: Request, reminder_id: int) -> HTMLResponse:
-        if not _is_authenticated(request):
-            return RedirectResponse(url="/login", status_code=302)
-        with connection_ctx(current_db_path) as conn:
-            service = _build_user_service(conn, active_username)
-            status = service.ack_reminder(reminder_id, acked_via="web")
-            reminders = service.list_reminders(limit=200)
-        return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": f"ack: {status}"})
-
-    @app.post("/reminders/{reminder_id}/skip", response_class=HTMLResponse)
-    def reminder_skip(request: Request, reminder_id: int) -> HTMLResponse:
-        if not _is_authenticated(request):
-            return RedirectResponse(url="/login", status_code=302)
-        with connection_ctx(current_db_path) as conn:
-            service = _build_user_service(conn, active_username)
-            status = service.skip_reminder(reminder_id, reason="web_skip")
-            reminders = service.list_reminders(limit=200)
-        return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": f"skip: {status}"})
-
-    @app.post("/reminders/{reminder_id}/snooze", response_class=HTMLResponse)
-    async def reminder_snooze(request: Request, reminder_id: int) -> HTMLResponse:
+    @app.post("/tasks/{task_id}/reminders", response_class=HTMLResponse)
+    async def task_create_reminder(request: Request, task_id: int) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
         form = await _parse_urlencoded_body(request)
         remind_at = (form.get("remind_at") or "").strip()
+        channel = _none_if_blank(form.get("channel")) or "web"
+        if not _is_iso_aware(remind_at):
+            return _redirect_with_flash(f"/tasks/{task_id}", "invalid ISO datetime")
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            reminder_id = service.create_reminder(task_id=task_id, remind_at=remind_at, channel=channel)
+        if reminder_id is None:
+            return _redirect_with_flash(f"/tasks/{task_id}", "reminder create failed")
+        return _redirect_with_flash(f"/tasks/{task_id}", f"reminder created:{reminder_id}")
+
+    @app.get("/reminders", response_class=HTMLResponse)
+    def reminders_page(request: Request, limit: int = Query(200, ge=1, le=500)) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            reminders = service.list_reminders(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update({"reminders": reminders, "flash": _none_if_blank(request.query_params.get("flash")), "view": "all", "limit": limit})
+        return templates.TemplateResponse(request, "reminders.html", ctx)
+
+    @app.get("/reminders/pending-ack", response_class=HTMLResponse)
+    def reminders_pending_ack_page(request: Request, limit: int = Query(200, ge=1, le=500)) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            reminders = service.list_pending_ack_reminders(limit=limit)
+        ctx = _base_ctx(request)
+        ctx.update({"reminders": reminders, "flash": _none_if_blank(request.query_params.get("flash")), "view": "pending_ack", "limit": limit})
+        return templates.TemplateResponse(request, "reminders_pending_ack.html", ctx)
+
+    @app.get("/reminders/{reminder_id}", response_class=HTMLResponse)
+    def reminder_detail_page(request: Request, reminder_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            reminder = service.show_reminder(reminder_id)
+        if reminder is None:
+            return HTMLResponse("reminder not found", status_code=404)
+        ctx = _base_ctx(request)
+        ctx.update({"reminder": reminder, "flash": _none_if_blank(request.query_params.get("flash"))})
+        return templates.TemplateResponse(request, "reminder_detail.html", ctx)
+
+    @app.get("/reminders/{reminder_id}/history", response_class=HTMLResponse)
+    def reminder_history_page(request: Request, reminder_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            reminder = service.show_reminder(reminder_id)
+            rows = service.reminder_history(reminder_id) or []
+        if reminder is None:
+            return HTMLResponse("reminder not found", status_code=404)
+        ctx = _base_ctx(request)
+        ctx.update({"reminder": reminder, "rows": rows})
+        return templates.TemplateResponse(request, "reminder_history.html", ctx)
+
+    @app.post("/reminders/{reminder_id}/ack", response_class=HTMLResponse)
+    def reminder_ack(request: Request, reminder_id: int, view: str = Query("all")) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        panel_view = "pending_ack" if view == "pending_ack" else "all"
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            status = service.ack_reminder(reminder_id, acked_via="web")
+            flash = f"ack: {status}"
+            if _is_htmx_request(request):
+                return _render_reminders_panel(request, service, flash=flash, view=panel_view)
+        return _redirect_with_flash(f"/reminders/{reminder_id}", flash)
+
+    @app.post("/reminders/{reminder_id}/skip", response_class=HTMLResponse)
+    def reminder_skip(request: Request, reminder_id: int, view: str = Query("all")) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        panel_view = "pending_ack" if view == "pending_ack" else "all"
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            status = service.skip_reminder(reminder_id, reason="web_skip")
+            flash = f"skip: {status}"
+            if _is_htmx_request(request):
+                return _render_reminders_panel(request, service, flash=flash, view=panel_view)
+        return _redirect_with_flash(f"/reminders/{reminder_id}", flash)
+
+    @app.post("/reminders/{reminder_id}/snooze", response_class=HTMLResponse)
+    async def reminder_snooze(request: Request, reminder_id: int, view: str = Query("all")) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        form = await _parse_urlencoded_body(request)
+        remind_at = (form.get("remind_at") or "").strip()
+        panel_view = "pending_ack" if view == "pending_ack" else "all"
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             if not _is_iso_aware(remind_at):
-                reminders = service.list_reminders(limit=200)
-                return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": "invalid ISO datetime"}, status_code=400)
+                if _is_htmx_request(request):
+                    return _render_reminders_panel(request, service, flash="invalid ISO datetime", view=panel_view, status_code=400)
+                return _redirect_with_flash(f"/reminders/{reminder_id}", "invalid ISO datetime")
             status = service.snooze_reminder(reminder_id, remind_at)
-            reminders = service.list_reminders(limit=200)
-        return templates.TemplateResponse(request, "partials/_reminders_panel.html", {"request": request, "reminders": reminders, "flash": f"snooze: {status}"})
+            flash = f"snooze: {status}"
+            if _is_htmx_request(request):
+                return _render_reminders_panel(request, service, flash=flash, view=panel_view)
+        return _redirect_with_flash(f"/reminders/{reminder_id}", flash)
 
     @app.get("/anki", response_class=HTMLResponse)
     def anki_page(
@@ -358,6 +668,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         deck: str | None = Query(None),
         draft_select: str | None = Query(None),
         due_select: str | None = Query(None),
+        flash: str | None = Query(None),
     ) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
@@ -374,7 +685,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
             {
                 "drafts": drafts,
                 "due_cards": due_cards,
-                "flash": None,
+                "flash": flash,
                 "import_errors": [],
                 "import_json": "",
                 "limit": limit,
@@ -423,7 +734,32 @@ def create_app(db_path: str | None = None) -> FastAPI:
             },
         )
 
-    @app.post("/anki/{draft_id}/update", response_class=HTMLResponse)
+    @app.get("/anki/{draft_id:int}", response_class=HTMLResponse)
+    def anki_detail_page(request: Request, draft_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            draft = service.show_anki_draft(draft_id)
+        if draft is None:
+            return HTMLResponse("anki draft not found", status_code=404)
+        ctx = _base_ctx(request)
+        ctx.update({"draft": draft, "flash": _none_if_blank(request.query_params.get("flash"))})
+        return templates.TemplateResponse(request, "anki_detail.html", ctx)
+
+    @app.post("/anki/{draft_id:int}/activate", response_class=HTMLResponse)
+    def anki_activate_one(request: Request, draft_id: int) -> HTMLResponse:
+        if not _is_authenticated(request):
+            return RedirectResponse(url="/login", status_code=302)
+        with connection_ctx(current_db_path) as conn:
+            service = _build_user_service(conn, active_username)
+            result = service.activate_anki_drafts(draft_ids=[draft_id])
+        flash = (
+            f"activate: activated={result['activated_count']} deduped={result['deduped_count']} "
+            f"skipped={result['skipped_count']} failed={result['failed_count']}"
+        )
+        return _redirect_with_flash(f"/anki/{draft_id}", flash)
+    @app.post("/anki/{draft_id:int}/update", response_class=HTMLResponse)
     async def anki_update(request: Request, draft_id: int) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
@@ -435,17 +771,21 @@ def create_app(db_path: str | None = None) -> FastAPI:
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             status = service.update_anki_draft(draft_id, front=front, back=back, tags=tags, deck_name=deck)
-            return _anki_panel_response(request, service, flash=f"update: {status}")
-
-    @app.post("/anki/{draft_id}/archive", response_class=HTMLResponse)
+            flash = f"update: {status}"
+            if _is_htmx_request(request):
+                return _anki_panel_response(request, service, flash=flash)
+        return _redirect_with_flash(f"/anki/{draft_id}", flash)
+    @app.post("/anki/{draft_id:int}/archive", response_class=HTMLResponse)
     def anki_archive(request: Request, draft_id: int) -> HTMLResponse:
         if not _is_authenticated(request):
             return RedirectResponse(url="/login", status_code=302)
         with connection_ctx(current_db_path) as conn:
             service = _build_user_service(conn, active_username)
             status = service.archive_anki_draft(draft_id)
-            return _anki_panel_response(request, service, flash=f"archive: {status}")
-
+            flash = f"archive: {status}"
+            if _is_htmx_request(request):
+                return _anki_panel_response(request, service, flash=flash)
+        return _redirect_with_flash(f"/anki/{draft_id}", flash)
     @app.post("/anki/import-json", response_class=HTMLResponse)
     async def anki_import_json(request: Request) -> HTMLResponse:
         if not _is_authenticated(request):
@@ -598,6 +938,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         request: Request,
         deck_name: str | None = Query(None),
         limit: int = Query(50, ge=1, le=200),
+        flash: str | None = Query(None),
     ) -> HTMLResponse:
         deck_filter = _none_if_blank(deck_name)
         with connection_ctx(current_db_path) as conn:
@@ -615,7 +956,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 "due_count": len(due_cards),
                 "total_due": len(due_cards),
                 "revealed": False,
-                "flash": None,
+                "flash": flash,
                 "deck_filter": deck_filter,
                 "deck_options": deck_options,
                 "limit": limit,
@@ -628,6 +969,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
     async def anki_review_reveal(request: Request) -> HTMLResponse:
         form = await _parse_urlencoded_body(request)
         deck_filter = _none_if_blank(form.get("deck_name"))
+        flash = _none_if_blank(form.get("flash"))
         try:
             limit = int(form.get("limit") or "50")
         except ValueError:
@@ -648,7 +990,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
                 "due_count": len(due_cards),
                 "total_due": len(due_cards),
                 "revealed": True,
-                "flash": None,
+                "flash": flash,
                 "deck_filter": deck_filter,
                 "limit": limit,
                 "session_done": card is None,
@@ -660,6 +1002,7 @@ def create_app(db_path: str | None = None) -> FastAPI:
         form = await _parse_urlencoded_body(request)
         rating = (form.get("rate") or "").strip().lower()
         deck_filter = _none_if_blank(form.get("deck_name"))
+        flash = _none_if_blank(form.get("flash"))
         try:
             limit = int(form.get("limit") or "50")
         except ValueError:
@@ -824,3 +1167,22 @@ def _none_if_blank(value: str | None) -> str | None:
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+def _is_htmx_request(request: Request) -> bool:
+    return (request.headers.get("HX-Request") or "").lower() == "true"
+
+
+def _redirect_with_flash(path: str, flash: str) -> RedirectResponse:
+    safe_flash = quote(flash, safe="")
+    sep = "&" if "?" in path else "?"
+    return RedirectResponse(url=f"{path}{sep}flash={safe_flash}", status_code=303)

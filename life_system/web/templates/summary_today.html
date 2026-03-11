@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Summary Today | Life System{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="section-head">
+    <h1>Summary Today</h1>
+    <a class="btn small ghost" href="/">Back to Dashboard</a>
+  </div>
+  <p class="muted">day={{ summary.day }}</p>
+
+  <section class="card nested">
+    <h3>Overview</h3>
+    <div class="detail-grid compact">
+      {% for key, value in summary.overview.items() %}
+      <div><span class="label">{{ key }}</span><span>{{ value }}</span></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card nested">
+    <h3>Open Loops</h3>
+    <div class="detail-grid compact">
+      {% for key, value in summary.open_loops.items() %}
+      <div><span class="label">{{ key }}</span><span>{{ value }}</span></div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <section class="card nested">
+    <h3>Note</h3>
+    <div class="prelike">{{ summary.note }}</div>
+  </section>
+</section>
+{% endblock %}

@@ -12,10 +12,13 @@
       <div class="brand">Life System</div>
       <nav class="nav">
         <a class="{% if active_page == 'home' %}active{% endif %}" href="/">首页</a>
-        <a class="{% if active_page == 'inbox' %}active{% endif %}" href="/inbox">Inbox Review</a>
+        <a class="{% if active_page == 'inbox' %}active{% endif %}" href="/inbox">Inbox</a>
+        <a class="{% if active_page == 'inbox' %}active{% endif %}" href="/inbox/review">Inbox Review</a>
         <a class="{% if active_page == 'tasks' %}active{% endif %}" href="/tasks">Tasks</a>
         <a class="{% if active_page == 'reminders' %}active{% endif %}" href="/reminders">Reminders</a>
+        <a class="{% if active_page == 'reminders' %}active{% endif %}" href="/reminders/pending-ack">Pending Ack</a>
         <a class="{% if active_page == 'journal' %}active{% endif %}" href="/journal">Journal</a>
+        <a class="{% if active_page == 'journal' %}active{% endif %}" href="/journal/today">Journal Today</a>
         <a class="{% if active_page == 'anki' %}active{% endif %}" href="/anki">Anki</a>
         <a class="{% if active_page == 'anki_review' %}active{% endif %}" href="/anki/review">Anki Review</a>
         <a class="{% if active_page == 'anki_stats' %}active{% endif %}" href="/anki/stats">Anki Stats</a>

@@ -1,13 +1,36 @@
-﻿{% extends "base.html" %}
-{% block title %}Journal | Life System{% endblock %}
+{% extends "base.html" %}
+{% block title %}{{ title }} | Life System{% endblock %}
 {% block content %}
 <section class="card journal-page">
   <div class="journal-header d-flex flex-wrap">
     <div>
-      <h1>Journal</h1>
-      <p class="muted">history (limit={{ limit }})</p>
+      <h1>{{ title }}</h1>
+      <p class="muted">{{ subtitle }} (limit={{ limit }})</p>
+    </div>
+    <div class="actions-row">
+      <a class="btn small ghost" href="/journal">All</a>
+      <a class="btn small ghost" href="/journal/today">Today</a>
     </div>
   </div>
+
+  <form class="row-form" method="get" action="{% if scope == 'today' %}/journal/today{% else %}/journal{% endif %}">
+    <label for="type">type</label>
+    <select id="type" name="type">
+      <option value="">all</option>
+      {% for t in ['activity','reflection','win','checkin'] %}
+      <option value="{{ t }}" {% if entry_type == t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+    <label for="limit">limit</label>
+    <input id="limit" name="limit" type="number" min="1" max="500" value="{{ limit }}" />
+    <label for="view">view</label>
+    <select id="view" name="view">
+      <option value="cards" {% if view_mode == 'cards' %}selected{% endif %}>cards</option>
+      <option value="timeline" {% if view_mode == 'timeline' %}selected{% endif %}>timeline</option>
+    </select>
+    <button class="btn small secondary" type="submit">Apply</button>
+  </form>
+
   <div class="journal-container">
     {% include "partials/_journal_panel.html" %}
   </div>
