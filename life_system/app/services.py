@@ -1268,7 +1268,7 @@ class _LegacyLifeSystemService:
         now_dt = self._parse_iso(now_iso)
         day = now_dt.astimezone(CST).date().isoformat()
         start_utc, end_utc = self._cst_day_to_utc_range(day)
-        rows = self.journal_repo.list_in_range(self.user_id, start_utc, end_utc, limit=50)
+        rows = self.journal_repo.list_in_range_all(self.user_id, start_utc, end_utc)
 
         reflections = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "reflection"]
         wins = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "win"]
@@ -1278,17 +1278,17 @@ class _LegacyLifeSystemService:
         text: str
         if deepseek_client is not None:
             lines: list[str] = []
-            for item in rows[:10]:
+            for item in rows:
                 lines.append(f"- {item['entry_type']}: {item['content']}")
-            evidence = "\n".join(lines) if lines else "- 今日暂无日志记录"
+            evidence = "\n".join(lines) if lines else "- ????????"
             prompt = (
-                f"日期(北京时间): {day}\n"
-                f"用户: {self.username}\n"
-                "请基于以下日志证据，生成1-2句中文鼓励话语。"
-                "要求: 真实、克制、不夸大，不要鸡汤，不要编造不存在的进展。\n"
-                f"日志证据:\n{evidence}"
+                f"??(????): {day}\n"
+                f"??: {self.username}\n"
+                "????????????1-2????????"
+                "??: ??????????????????????????\n"
+                f"????:\n{evidence}"
             )
-            system_prompt = "你是一个谨慎、温和、证据优先的中文教练。只输出鼓励话语本身。"
+            system_prompt = "??????????????????????????????"
             try:
                 generated = deepseek_client.generate_encouragement(prompt=prompt, system_prompt=system_prompt)
                 if generated.strip():
@@ -2631,7 +2631,7 @@ class EncouragementService:
         now_dt = self._parse_iso(now_iso)
         day = now_dt.astimezone(CST).date().isoformat()
         start_utc, end_utc = self._cst_day_to_utc_range(day)
-        rows = self.journal_repo.list_in_range(self.user_id, start_utc, end_utc, limit=50)
+        rows = self.journal_repo.list_in_range_all(self.user_id, start_utc, end_utc)
 
         reflections = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "reflection"]
         wins = [str(r["content"]) for r in rows if str(r.get("entry_type")) == "win"]
@@ -2641,7 +2641,7 @@ class EncouragementService:
         text: str
         if deepseek_client is not None:
             lines: list[str] = []
-            for item in rows[:10]:
+            for item in rows:
                 lines.append(f"- {item['entry_type']}: {item['content']}")
             evidence = "\n".join(lines) if lines else "- ????????"
             prompt = (

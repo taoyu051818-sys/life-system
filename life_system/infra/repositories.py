@@ -1483,6 +1483,20 @@ class JournalRepository:
         ).fetchall()
         return _dicts(rows)
 
+    def list_in_range_all(self, user_id: int, start_iso: str, end_iso: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            """
+            SELECT
+              id, entry_type, content, related_task_id, related_inbox_id,
+              energy_level, focus_level, mood_level, tags, created_at
+            FROM journal_entries
+            WHERE user_id = ? AND created_at >= ? AND created_at < ?
+            ORDER BY id DESC
+            """,
+            (user_id, start_iso, end_iso),
+        ).fetchall()
+        return _dicts(rows)
+
 
 def created_at_now() -> str:
     # local import to avoid cyclic dependency

@@ -109,3 +109,27 @@ def test_setup_menu_contains_encouragement_command() -> None:
     commands = json.loads(cmd_payload["commands"])
     command_names = [c["command"] for c in commands]
     assert "encouragement" in command_names
+
+
+def test_encouragement_prompt_uses_all_today_journals() -> None:
+    class CaptureDeepSeek:
+        def __init__(self):
+            self.prompt = ""
+
+        def generate_encouragement(self, prompt: str, system_prompt: str) -> str:
+            del system_prompt
+            self.prompt = prompt
+            return "ok"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = str(Path(tmp) / "life.db")
+        for i in range(1, 12):
+            run_with_output(["--db", db_path, "journal", "add", f"entry-{i}", "--type", "activity"])
+
+        fake = CaptureDeepSeek()
+        with patch("life_system.cli.commands._build_deepseek_client_from_env", return_value=fake):
+            rc, _ = run_with_output(["--db", db_path, "--user", "xiaoyu", "encouragement", "today"])
+
+        assert rc == 0
+        assert "entry-11" in fake.prompt
+        assert "entry-1" in fake.prompt
