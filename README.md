@@ -551,3 +551,15 @@ Notes:
 - Inbox triage web actions now support task / anki / archive / keep on both inbox list and inbox review pages.
 - Task detail page includes a minimal reminder creation form.
 - All existing business logic remains in service layer; web handlers only orchestrate request/response and rendering.
+
+## Telegram Anki Review Share Link
+
+- Telegram menu now includes `/ar`.
+- `/ar` generates a one-time Anki review share link and sends it back in private chat.
+- Required env for Telegram share link generation:
+  - `LIFE_WEB_BASE_URL=https://your-web-host`
+- Generated link points to:
+  - `/share/anki-review?t=...`
+- Current token session behavior stays unchanged:
+  - single-use token
+  - 120 minute web share session after successful consume

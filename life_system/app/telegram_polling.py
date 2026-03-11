@@ -17,6 +17,7 @@ _HELP_TEXT = (
     "/r 今天学到了什么\n"
     "/w 今天完成了什么\n"
     "/ir 收件箱回顾入口\n"
+    "/ar 获取Anki复习链接\n"
     "/encouragement 获取今日鼓励\n"
     "/c energy=4 focus=3 mood=5 今天状态不错"
 )
@@ -213,6 +214,8 @@ def parse_journal_message(text: str) -> dict[str, Any]:
             return {"kind": "help", "reply": _HELP_TEXT}
         if cmd == "/ir":
             return {"kind": "manual_inbox_review"}
+        if cmd == "/ar":
+            return {"kind": "anki_review_share"}
         if cmd == "/encouragement":
             return {"kind": "encouragement"}
         if cmd not in {"/r", "/w", "/c"}:
@@ -457,6 +460,8 @@ class TelegramPollingService:
             return {"handled": True, "reason": "help"}
         if kind == "manual_inbox_review":
             return self._handle_manual_inbox_review(chat_id=chat_id, user=user)
+        if kind == "anki_review_share":
+            return self._handle_anki_review_share(chat_id=chat_id, user=user)
         if kind == "encouragement":
             return self._handle_encouragement(chat_id=chat_id, user=user)
         if kind == "ignore":
@@ -577,6 +582,28 @@ class TelegramPollingService:
             return "已归档" if status == "archived" else "已处理过了"
         return "无法识别操作"
 
+    def _handle_anki_review_share(self, chat_id: str, user: dict[str, Any]) -> dict[str, Any]:
+        base_url = (os.getenv("LIFE_WEB_BASE_URL") or "").strip()
+        if not base_url:
+            self._safe_send_message(chat_id, "未配置 LIFE_WEB_BASE_URL，暂时无法生成复习链接。", with_keyboard=True)
+            return {"handled": True, "reason": "anki_review_share_missing_base_url"}
+
+        service = LifeSystemService(
+            self.conn,
+            user_id=user["id"],
+            username=user["username"],
+            telegram_chat_id=user.get("telegram_chat_id"),
+            reminder_sender=self.telegram_sender,
+        )
+        payload = service.create_anki_review_share_link(base_url=base_url)
+        url = str(payload["url"])
+        expires_at = str(payload["expires_at"])
+        self._safe_send_message(
+            chat_id,
+            f"Anki 复习链接：\n{url}\n\n有效期至：{expires_at}\n120 分钟内可用于手机端直接进入 /anki/review。",
+            with_keyboard=True,
+        )
+        return {"handled": True, "reason": "anki_review_share"}
     def _handle_encouragement(self, chat_id: str, user: dict[str, Any]) -> dict[str, Any]:
         service = LifeSystemService(
             self.conn,
@@ -660,6 +687,8 @@ class TelegramPollingService:
             )
             return str(result.get("message", "今天已跳过"))
         return "无法识别操作"
+
+
 
 
 

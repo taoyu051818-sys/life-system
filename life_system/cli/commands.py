@@ -306,7 +306,7 @@ def run_cli(argv: Sequence[str] | None = None) -> int:
                     print(f"telegram setup-menu failed: {exc}")
                     return 1
                 if result.get("menu_button", True):
-                    print("telegram 鑿滃崟宸茶缃細/r /w /c /ir /encouragement /help")
+                    print("telegram 菜单已设置：/r /w /c /ir /ar /encouragement /help")
                 else:
                     print("telegram command menu set; menu button setup failed")
                 return 0
@@ -1079,6 +1079,7 @@ def _dispatch(service: LifeSystemService, args: argparse.Namespace) -> int:
     parser = build_parser()
     parser.print_help()
     return 1
+
 
 
 
